@@ -13,12 +13,28 @@ export interface JobRecord {
   progress: number;
   message?: string;
   downloadUrl?: string;
+  expiresAt: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export type CreateJobInput = Omit<JobRecord, "createdAt" | "updatedAt">;
 export type UpdateJobPatch = Partial<Omit<JobRecord, "jobId" | "createdAt">>;
+
+function isExpired(job: JobRecord) {
+  return Date.parse(job.expiresAt) <= Date.now();
+}
+
+function toExpiredJob(job: JobRecord): JobRecord {
+  return {
+    ...job,
+    status: "expired",
+    progress: job.progress,
+    downloadUrl: undefined,
+    message: "다운로드 가능 시간이 만료되었습니다. 파일을 다시 업로드하세요.",
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 interface JobStore {
   createJob(input: CreateJobInput): Promise<JobRecord>;
@@ -42,7 +58,13 @@ class MemoryJobStore implements JobStore {
   }
 
   async getJob(jobId: string) {
-    return this.jobs.get(jobId);
+    const job = this.jobs.get(jobId);
+    if (!job) return undefined;
+    if (job.status === "expired" || !isExpired(job)) return job;
+
+    const expiredJob = toExpiredJob(job);
+    this.jobs.set(jobId, expiredJob);
+    return expiredJob;
   }
 
   async updateJob(jobId: string, patch: UpdateJobPatch) {
@@ -81,10 +103,16 @@ class FirestoreJobStore implements JobStore {
   }
 
   async getJob(jobId: string) {
-    const snapshot = await this.collection.doc(jobId).get();
+    const ref = this.collection.doc(jobId);
+    const snapshot = await ref.get();
     if (!snapshot.exists) return undefined;
 
-    return snapshot.data() as JobRecord;
+    const job = snapshot.data() as JobRecord;
+    if (job.status === "expired" || !isExpired(job)) return job;
+
+    const expiredJob = toExpiredJob(job);
+    await ref.set(expiredJob);
+    return expiredJob;
   }
 
   async updateJob(jobId: string, patch: UpdateJobPatch) {

@@ -1,4 +1,5 @@
 const signedDownloadUrlTtlMinutes = Number(process.env.SIGNED_DOWNLOAD_URL_TTL_MINUTES ?? 15);
+const jobRetentionMinutes = Number(process.env.JOB_RETENTION_MINUTES ?? 30);
 
 export const config = {
   port: Number(process.env.PORT ?? 8080),
@@ -15,6 +16,7 @@ export const config = {
   gcsOriginalPrefix: process.env.GCS_ORIGINAL_PREFIX ?? "staging",
   gcsResultPrefix: process.env.GCS_RESULT_PREFIX ?? "output",
   signedDownloadUrlTtlMs: signedDownloadUrlTtlMinutes * 60 * 1000,
+  jobRetentionMs: jobRetentionMinutes * 60 * 1000,
   jobStoreBackend: process.env.JOB_STORE_BACKEND ?? (process.env.FIRESTORE_JOBS_COLLECTION ? "firestore" : "memory"),
   firestoreProjectId: process.env.FIRESTORE_PROJECT_ID ?? "",
   firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID ?? "(default)",

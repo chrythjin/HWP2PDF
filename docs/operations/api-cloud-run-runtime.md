@@ -40,6 +40,7 @@ H2Orestart is GPL-3.0. Before public production launch, confirm the project's Sa
 | `GCS_ORIGINAL_PREFIX` | `staging` | Prefix for uploaded original HWP objects. |
 | `GCS_RESULT_PREFIX` | `output` | Prefix for converted PDF objects. |
 | `SIGNED_DOWNLOAD_URL_TTL_MINUTES` | `15` | TTL for V4 signed result download URLs. |
+| `JOB_RETENTION_MINUTES` | `30` | Job polling and local-result download retention. Expired jobs return `expired`; local result downloads return HTTP 410. |
 | `JOB_STORE_BACKEND` | `memory` or `firestore` when `FIRESTORE_JOBS_COLLECTION` exists | Selects in-memory local job state or Firestore durable polling state. |
 | `FIRESTORE_PROJECT_ID` | ADC default | Optional project ID for the Firestore client. |
 | `FIRESTORE_DATABASE_ID` | `(default)` | Firestore database ID. |
@@ -55,7 +56,8 @@ The API keeps the current multipart upload and job polling surface:
 3. Job metadata is written through the selected job store. Production should use `JOB_STORE_BACKEND=firestore` so polling works across Cloud Run instances.
 4. LibreOffice converts from the local temp file.
 5. If `STORAGE_BACKEND=gcs`, the PDF is uploaded to `GCS_RESULT_PREFIX/{jobId}/{jobId}.pdf` and the job receives a 15-minute V4 signed URL.
-6. If the local backend is active, the job receives the existing `RESULT_URL_BASE/{jobId}.pdf` URL and Express serves `/v1/results` from `RESULT_DIR`.
+6. Each job records `expiresAt = createdAt + JOB_RETENTION_MINUTES`. Polling an expired job returns `status: "expired"` and hides the download URL.
+7. If the local backend is active, the job receives the existing `RESULT_URL_BASE/{jobId}.pdf` URL. Downloads are served through the job-aware `/v1/results/{jobId}.pdf` route, which returns HTTP 410 after expiry instead of exposing stale files through static serving.
 
 Cloud Run should grant the service account the minimum bucket and Firestore permissions required to create/read/update job documents, create objects, and sign/download result objects. Use a private bucket; do not make the result prefix public.
 

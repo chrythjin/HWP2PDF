@@ -73,6 +73,7 @@ jobs:
             --set-env-vars GCS_ORIGINAL_PREFIX="staging" \
             --set-env-vars GCS_RESULT_PREFIX="output" \
             --set-env-vars SIGNED_DOWNLOAD_URL_TTL_MINUTES="15" \
+            --set-env-vars JOB_RETENTION_MINUTES="30" \
             --set-env-vars JOB_STORE_BACKEND=firestore \
             --set-env-vars FIRESTORE_DATABASE_ID="(default)" \
             --set-env-vars FIRESTORE_JOBS_COLLECTION="jobs"

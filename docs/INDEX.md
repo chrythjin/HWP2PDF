@@ -35,3 +35,4 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260613_043000_api-cloud-run-runtime.md` - added API Docker/Cloud Run runtime packaging and deployment documentation.
 - `sessions/20260613_181757_api-gcs-storage-boundary.md` - added configurable GCS original/result persistence and signed result URLs.
 - `sessions/20260613_190000_firestore-job-store-deploy.md` - added Firestore-backed job state, Cloud Run/Vercel deployment workflows, and GCS lifecycle config.
+- `sessions/20260613_191700_job-expiry-download-gate.md` - added job retention metadata and job-aware local result download expiry enforcement.

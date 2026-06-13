@@ -3,6 +3,7 @@ export interface UploadResponse {
   status: UploadStatus;
   message?: string;
   downloadUrl?: string;
+  expiresAt?: string;
 }
 
 export type UploadStatus =
@@ -22,6 +23,7 @@ export interface JobStatusResponse {
   downloadUrl?: string;
   createdAt?: string;
   updatedAt?: string;
+  expiresAt?: string;
 }
 
 export interface FileValidationResult {

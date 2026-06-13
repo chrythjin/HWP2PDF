@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { Storage } from "@google-cloud/storage";
 import { config } from "../config.js";
 
@@ -76,4 +77,10 @@ export async function publishResultFile(input: {
   });
 
   return { objectPath, downloadUrl };
+}
+
+export async function removeLocalResultFile(localPath: string | undefined) {
+  if (!localPath || shouldUseGcs()) return;
+
+  await fs.rm(localPath, { force: true });
 }

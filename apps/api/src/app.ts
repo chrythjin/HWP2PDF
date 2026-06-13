@@ -34,7 +34,6 @@ export async function createApp() {
   );
 
   app.use(router);
-  app.use("/v1/results", express.static(config.resultDirectory));
   app.use(notFoundHandler);
   app.use(errorHandler);
 
