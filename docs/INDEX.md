@@ -38,3 +38,4 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260613_190000_firestore-job-store-deploy.md` - added Firestore-backed job state, Cloud Run/Vercel deployment workflows, and GCS lifecycle config.
 - `sessions/20260613_191700_job-expiry-download-gate.md` - added job retention metadata and job-aware local result download expiry enforcement.
 - `sessions/20260613_193000_direct-gcs-upload.md` - added direct browser-to-GCS upload flow, fallback behavior, smoke script, CORS config, and user setup checklist.
+- `sessions/20260613_201000_deployment-workflow-preflight.md` - added deployment workflow preflight gates so missing GCP/Vercel secrets skip deployment instead of failing pushes.

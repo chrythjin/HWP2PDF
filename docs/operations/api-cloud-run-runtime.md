@@ -107,7 +107,7 @@ The checked-in `.github/workflows/deploy-api-cloud-run.yml` builds the API image
 - vars: `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_RUN_API_SERVICE`, `WEB_ORIGIN`, `GCS_BUCKET_NAME`, `CLOUD_RUN_API_SERVICE_ACCOUNT`
 - secrets: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT_EMAIL`
 
-The workflow deploys with `STORAGE_BACKEND=gcs` and `JOB_STORE_BACKEND=firestore`, then smoke-tests `/health`, invalid multipart upload handling, and direct-upload URL initiation.
+If any required deployment variable or secret is missing, the workflow preflight job succeeds and skips the deploy job instead of failing the push. Once all values are configured, the workflow deploys with `STORAGE_BACKEND=gcs` and `JOB_STORE_BACKEND=firestore`, then smoke-tests `/health`, invalid multipart upload handling, and direct-upload URL initiation.
 
 ## Current limitation
 

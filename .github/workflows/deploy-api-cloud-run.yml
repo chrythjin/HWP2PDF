@@ -25,7 +25,46 @@ env:
   SERVICE_NAME: ${{ vars.CLOUD_RUN_API_SERVICE || 'hwp2pdf-api' }}
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check deployment configuration
+        id: check
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          CLOUD_RUN_API_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}
+          GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
+          WEB_ORIGIN: ${{ vars.WEB_ORIGIN }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        run: |
+          missing=()
+          for name in \
+            GCP_PROJECT_ID \
+            CLOUD_RUN_API_SERVICE_ACCOUNT \
+            GCS_BUCKET_NAME \
+            WEB_ORIGIN \
+            GCP_WORKLOAD_IDENTITY_PROVIDER \
+            GCP_SERVICE_ACCOUNT_EMAIL
+          do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Cloud Run deployment is not configured yet. Missing: ${missing[*]}"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
