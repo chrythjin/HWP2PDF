@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
 import { router } from "./routes/v1.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
+import { requestIdMiddleware } from "./middleware/request-id.js";
 
 export async function createApp() {
   await fs.mkdir(config.uploadDirectory, { recursive: true });
@@ -13,6 +14,7 @@ export async function createApp() {
 
   const app = express();
 
+  app.use(requestIdMiddleware);
   app.use(helmet());
   app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json({ limit: "1mb" }));

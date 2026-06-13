@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { config } from "../config.js";
 import { updateJob } from "./job-store.js";
+import { publishResultFile } from "./storage-service.js";
 
 export interface ConversionInput {
   jobId: string;
@@ -10,7 +12,7 @@ export interface ConversionInput {
 }
 
 export async function convertJobToPdf(input: ConversionInput) {
-  updateJob(input.jobId, {
+  await updateJob(input.jobId, {
     status: "processing",
     progress: 70,
     message: "PDF 변환을 시작했습니다.",
@@ -32,15 +34,21 @@ export async function convertJobToPdf(input: ConversionInput) {
       await fs.rename(convertedPath, resultPath);
     }
 
-    updateJob(input.jobId, {
+    const result = await publishResultFile({
+      jobId: input.jobId,
+      localPath: resultPath,
+    });
+
+    await updateJob(input.jobId, {
       status: "completed",
       progress: 100,
       resultPath,
-      downloadUrl: `${config.resultUrlBase}/${input.jobId}.pdf`,
+      resultObjectPath: result.objectPath,
+      downloadUrl: result.downloadUrl,
       message: "변환이 완료되었습니다.",
     });
   } catch (error) {
-    updateJob(input.jobId, {
+    await updateJob(input.jobId, {
       status: "failed",
       progress: 0,
       message: error instanceof Error ? error.message : "변환에 실패했습니다.",
@@ -51,33 +59,45 @@ export async function convertJobToPdf(input: ConversionInput) {
 }
 
 async function runLibreOffice(sourcePath: string, outputDirectory: string) {
-  await new Promise<void>((resolve, reject) => {
-    const process = spawn(config.converterCommand, [
-      "--headless",
-      "--convert-to",
-      "pdf",
-      "--outdir",
-      outputDirectory,
-      sourcePath,
-    ]);
+  const sourceBaseName = path.basename(sourcePath, path.extname(sourcePath));
+  const profileDirectory = path.join(outputDirectory, `${sourceBaseName}-lo-profile`);
 
-    let stderr = "";
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const process = spawn(config.converterCommand, [
+        "--headless",
+        "--nologo",
+        "--nofirststartwizard",
+        "--norestore",
+        `--env:UserInstallation=${pathToFileURL(profileDirectory).href}`,
+        "--infilter=Hwp2002_File",
+        "--convert-to",
+        "pdf:writer_pdf_Export",
+        "--outdir",
+        outputDirectory,
+        sourcePath,
+      ]);
 
-    process.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
+      let stderr = "";
+
+      process.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+
+      process.on("error", () => {
+        reject(new Error("LibreOffice 변환 엔진을 실행할 수 없습니다. LIBREOFFICE_BIN 또는 런타임 이미지를 확인하세요."));
+      });
+
+      process.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+
+        reject(new Error(stderr.trim() || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`));
+      });
     });
-
-    process.on("error", () => {
-      reject(new Error("LibreOffice 변환 엔진을 실행할 수 없습니다. LIBREOFFICE_BIN 또는 런타임 이미지를 확인하세요."));
-    });
-
-    process.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(stderr.trim() || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`));
-    });
-  });
+  } finally {
+    await fs.rm(profileDirectory, { force: true, recursive: true });
+  }
 }

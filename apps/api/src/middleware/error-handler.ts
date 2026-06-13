@@ -11,7 +11,8 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
     return;
   }
 
-  console.error(error);
+  const message = error instanceof Error ? error.message : "Unknown error";
+  console.error(JSON.stringify({ level: "error", requestId: response.locals.requestId, message }));
   response.status(500).json({
     error: {
       code: "internal_error",

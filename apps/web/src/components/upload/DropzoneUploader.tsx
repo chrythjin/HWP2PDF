@@ -131,7 +131,7 @@ export default function DropzoneUploader() {
       };
 
       xhr.send(formData);
-    } catch (error) {
+    } catch {
       setStatus("failed");
       setProgress(0);
       setErrorMessage("예상치 못한 오류가 발생했습니다.");
@@ -174,7 +174,7 @@ export default function DropzoneUploader() {
           setErrorMessage(data.message ?? "변환에 실패했습니다.");
           clearInterval(interval);
         }
-      } catch (error) {
+      } catch {
         setStatus("failed");
         setErrorMessage("작업 상태를 불러오는 중 오류가 발생했습니다.");
         clearInterval(interval);

@@ -27,7 +27,8 @@ Use this file for repo-specific guidance only. If docs disagree with executable 
 - Frontend source is under `apps/web/src/app` and `apps/web/src/components`; imports may use the `@/*` alias from `apps/web/tsconfig.json`.
 - Shared upload constraints are centralized in `packages/shared/src/index.ts`: `.hwp` only, max 20MB, async job/status response types, and polling constants.
 - API source is under `apps/api/src`; it exposes `GET /health`, `POST /v1/upload`, and `GET /v1/jobs/:jobId` using the shared API route constants.
-- The API currently uses an in-memory job store and local `tmp/uploads` / `tmp/results` directories. Production GCS storage remains a future service-boundary implementation.
+- Local mode uses an in-memory job store plus `tmp/uploads` / `tmp/results`.
+- Production mode should set `STORAGE_BACKEND=gcs` and `JOB_STORE_BACKEND=firestore`; originals/results are persisted in GCS and job polling state is persisted in Firestore.
 - The conversion service shells out to `LIBREOFFICE_BIN` or `soffice`; if LibreOffice is unavailable, jobs fail with a clear converter configuration message.
 
 ## Documentation rule

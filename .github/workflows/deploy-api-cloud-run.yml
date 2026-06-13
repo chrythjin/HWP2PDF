@@ -1,0 +1,83 @@
+name: Deploy API to Cloud Run
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "apps/api/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/deploy-api-cloud-run.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: asia-northeast3
+  GAR_LOCATION: asia-northeast3
+  GAR_REPOSITORY: hwp2pdf
+  SERVICE_NAME: hwp2pdf-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
+
+      - name: Build and push API image
+        run: |
+          IMAGE="${GAR_LOCATION}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${GAR_REPOSITORY}/${SERVICE_NAME}:${{ github.sha }}"
+          docker build -f apps/api/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy API to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE_NAME" \
+            --image "$IMAGE" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 1 \
+            --concurrency 1 \
+            --timeout 300 \
+            --min-instances 0 \
+            --max-instances 10 \
+            --service-account "${{ vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}" \
+            --set-env-vars NODE_ENV=production \
+            --set-env-vars CORS_ORIGIN="${{ vars.WEB_ORIGIN }}" \
+            --set-env-vars STORAGE_BACKEND=gcs \
+            --set-env-vars GCS_BUCKET_NAME="${{ vars.GCS_BUCKET_NAME }}" \
+            --set-env-vars GCS_ORIGINAL_PREFIX="staging" \
+            --set-env-vars GCS_RESULT_PREFIX="output" \
+            --set-env-vars SIGNED_DOWNLOAD_URL_TTL_MINUTES="15" \
+            --set-env-vars JOB_STORE_BACKEND=firestore \
+            --set-env-vars FIRESTORE_DATABASE_ID="(default)" \
+            --set-env-vars FIRESTORE_JOBS_COLLECTION="jobs"
+
+      - name: Smoke test deployed API
+        run: |
+          URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
+          curl --fail --silent --show-error "$URL/health"
