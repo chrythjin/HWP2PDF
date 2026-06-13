@@ -11,6 +11,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "scripts/smoke-api.mjs"
       - ".github/workflows/deploy-api-cloud-run.yml"
 
 permissions:
@@ -81,4 +82,4 @@ jobs:
       - name: Smoke test deployed API
         run: |
           URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
-          curl --fail --silent --show-error "$URL/health"
+          API_BASE_URL="$URL" node scripts/smoke-api.mjs

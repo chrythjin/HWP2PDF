@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://YOUR_VERCEL_DOMAIN.example"],
+    "method": ["PUT"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]

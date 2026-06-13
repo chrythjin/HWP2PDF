@@ -26,6 +26,27 @@ export interface JobStatusResponse {
   expiresAt?: string;
 }
 
+export interface DirectUploadInitRequest {
+  fileName: string;
+  fileSize: number;
+}
+
+export interface DirectUploadInitResponse {
+  uploadMode: "direct";
+  jobId: string;
+  uploadUrl: string;
+  objectPath: string;
+  expiresAt: string;
+  headers: Record<string, string>;
+}
+
+export interface DirectUploadCompleteRequest {
+  jobId: string;
+  objectPath: string;
+  fileName: string;
+  fileSize: number;
+}
+
 export interface FileValidationResult {
   valid: boolean;
   error?: string;
@@ -62,6 +83,8 @@ export function validateFile(file: {
 
 export const API_ROUTES = {
   UPLOAD: "/v1/upload",
+  UPLOADS_INITIATE: "/v1/uploads/initiate",
+  UPLOADS_COMPLETE: "/v1/uploads/complete",
   JOBS: "/v1/jobs",
   HEALTH: "/health",
 } as const;

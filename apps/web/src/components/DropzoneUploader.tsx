@@ -8,6 +8,7 @@ import {
   MAX_FILE_SIZE,
   MAX_POLLING_TIME,
   POLLING_INTERVAL,
+  type DirectUploadInitResponse,
   type JobStatusResponse,
   type UploadResponse,
   type UploadStatus,
@@ -118,58 +119,138 @@ export default function DropzoneUploader() {
       setDownloadUrl(null);
       setJobId(null);
 
-      const formData = new FormData();
-      formData.append("file", selectedFile);
+      const startPolling = (response: UploadResponse) => {
+        setJobId(response.jobId);
+        setStatus(response.status);
+        setProgress(60);
+        void pollJobStatus(response.jobId, Date.now(), uploadSession);
+      };
 
-      await new Promise<void>((resolve) => {
-        const request = new XMLHttpRequest();
-        request.open("POST", buildApiUrl(API_ROUTES.UPLOAD));
+      const uploadViaMultipart = async () => {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
 
-        request.upload.onprogress = (event) => {
-          if (!event.lengthComputable) return;
-          setProgress(Math.min(50, Math.max(5, Math.round((event.loaded / event.total) * 50))));
-        };
+        await new Promise<void>((resolve) => {
+          const request = new XMLHttpRequest();
+          request.open("POST", buildApiUrl(API_ROUTES.UPLOAD));
 
-        request.onload = () => {
-          if (uploadSessionRef.current !== uploadSession) {
+          request.upload.onprogress = (event) => {
+            if (!event.lengthComputable) return;
+            setProgress(Math.min(50, Math.max(5, Math.round((event.loaded / event.total) * 50))));
+          };
+
+          request.onload = () => {
+            if (uploadSessionRef.current !== uploadSession) {
+              resolve();
+              return;
+            }
+
+            if (request.status < 200 || request.status >= 300) {
+              setStatus("failed");
+              setProgress(0);
+              setErrorMessage(readApiError(request.responseText, `업로드에 실패했습니다. (${request.status})`));
+              resolve();
+              return;
+            }
+
+            startPolling(JSON.parse(request.responseText) as UploadResponse);
             resolve();
-            return;
-          }
+          };
 
-          if (request.status < 200 || request.status >= 300) {
+          request.onerror = () => {
+            if (uploadSessionRef.current !== uploadSession) {
+              resolve();
+              return;
+            }
+
             setStatus("failed");
             setProgress(0);
-            setErrorMessage(readApiError(request.responseText, `업로드에 실패했습니다. (${request.status})`));
+            setErrorMessage("API 서버에 연결할 수 없습니다. 서버 실행 상태와 API 주소를 확인하세요.");
             resolve();
-            return;
+          };
+
+          request.send(formData);
+        });
+      };
+
+      const uploadToSignedUrl = async (upload: DirectUploadInitResponse) => {
+        await new Promise<void>((resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.open("PUT", upload.uploadUrl);
+
+          for (const [name, value] of Object.entries(upload.headers)) {
+            request.setRequestHeader(name, value);
           }
 
-          const response = JSON.parse(request.responseText) as UploadResponse;
-          setJobId(response.jobId);
-          setStatus(response.status);
-          setProgress(60);
-          void pollJobStatus(response.jobId, Date.now(), uploadSession);
-          resolve();
-        };
+          request.upload.onprogress = (event) => {
+            if (!event.lengthComputable) return;
+            setProgress(Math.min(50, Math.max(5, Math.round((event.loaded / event.total) * 50))));
+          };
 
-        request.onerror = () => {
-          if (uploadSessionRef.current !== uploadSession) {
-            resolve();
-            return;
-          }
+          request.onload = () => {
+            if (request.status >= 200 && request.status < 300) {
+              resolve();
+              return;
+            }
 
-          setStatus("failed");
-          setProgress(0);
-          setErrorMessage("API 서버에 연결할 수 없습니다. 서버 실행 상태와 API 주소를 확인하세요.");
-          resolve();
-        };
+            reject(new Error(`GCS 업로드에 실패했습니다. (${request.status})`));
+          };
 
-        request.send(formData);
-      });
+          request.onerror = () => reject(new Error("GCS 업로드 URL에 연결할 수 없습니다."));
+          request.send(selectedFile);
+        });
+      };
+
+      try {
+        const initResponse = await fetch(buildApiUrl(API_ROUTES.UPLOADS_INITIATE), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: selectedFile.name,
+            fileSize: selectedFile.size,
+          }),
+        });
+
+        const initText = await initResponse.text();
+        if (initResponse.status === 409) {
+          await uploadViaMultipart();
+          return;
+        }
+
+        if (!initResponse.ok) {
+          throw new Error(readApiError(initText, "직접 업로드 URL을 만들지 못했습니다."));
+        }
+
+        const directUpload = JSON.parse(initText) as DirectUploadInitResponse;
+        await uploadToSignedUrl(directUpload);
+
+        const completeResponse = await fetch(buildApiUrl(API_ROUTES.UPLOADS_COMPLETE), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId: directUpload.jobId,
+            objectPath: directUpload.objectPath,
+            fileName: selectedFile.name,
+            fileSize: selectedFile.size,
+          }),
+        });
+
+        const completeText = await completeResponse.text();
+        if (!completeResponse.ok) {
+          throw new Error(readApiError(completeText, "업로드 완료 처리를 실패했습니다."));
+        }
+
+        if (uploadSessionRef.current !== uploadSession) return;
+        startPolling(JSON.parse(completeText) as UploadResponse);
+      } catch (error) {
+        if (uploadSessionRef.current !== uploadSession) return;
+        setStatus("failed");
+        setProgress(0);
+        setErrorMessage(error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.");
+      }
     },
     [pollJobStatus],
   );
-
   const onDrop = useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
       if (isActiveStatus(status)) return;

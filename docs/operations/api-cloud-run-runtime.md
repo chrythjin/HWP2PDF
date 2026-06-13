@@ -49,28 +49,33 @@ H2Orestart is GPL-3.0. Before public production launch, confirm the project's Sa
 
 ## Storage and job modes
 
-The API keeps the current multipart upload and job polling surface:
+The API supports two upload paths: direct browser-to-GCS upload in GCS mode and multipart API upload as the local/dev fallback.
 
-1. `POST /v1/upload` stores the received file locally for conversion.
-2. If `STORAGE_BACKEND=gcs`, the original HWP is uploaded to `GCS_ORIGINAL_PREFIX/{jobId}/{safeFileName}` before the job is queued.
-3. Job metadata is written through the selected job store. Production should use `JOB_STORE_BACKEND=firestore` so polling works across Cloud Run instances.
-4. LibreOffice converts from the local temp file.
-5. If `STORAGE_BACKEND=gcs`, the PDF is uploaded to `GCS_RESULT_PREFIX/{jobId}/{jobId}.pdf` and the job receives a 15-minute V4 signed URL.
-6. Each job records `expiresAt = createdAt + JOB_RETENTION_MINUTES`. Polling an expired job returns `status: "expired"` and hides the download URL.
-7. If the local backend is active, the job receives the existing `RESULT_URL_BASE/{jobId}.pdf` URL. Downloads are served through the job-aware `/v1/results/{jobId}.pdf` route, which returns HTTP 410 after expiry instead of exposing stale files through static serving.
+1. In GCS mode, the web client calls `POST /v1/uploads/initiate` with file metadata and receives a V4 signed `PUT` URL for `GCS_ORIGINAL_PREFIX/{jobId}/{safeFileName}`.
+2. The browser uploads the HWP directly to GCS, then calls `POST /v1/uploads/complete` with the job ID and object path.
+3. The API downloads the uploaded original from GCS into the container temp directory, creates the job, and starts conversion.
+4. In local/dev mode, `POST /v1/uploads/initiate` returns `409 direct_upload_unavailable`, and the web client falls back to multipart `POST /v1/upload`.
+5. Job metadata is written through the selected job store. Production should use `JOB_STORE_BACKEND=firestore` so polling works across Cloud Run instances.
+6. LibreOffice converts from the local temp file.
+7. If `STORAGE_BACKEND=gcs`, the PDF is uploaded to `GCS_RESULT_PREFIX/{jobId}/{jobId}.pdf` and the job receives a 15-minute V4 signed URL.
+8. Each job records `expiresAt = createdAt + JOB_RETENTION_MINUTES`. Polling an expired job returns `status: "expired"` and hides the download URL.
+9. If the local backend is active, the job receives the existing `RESULT_URL_BASE/{jobId}.pdf` URL. Downloads are served through the job-aware `/v1/results/{jobId}.pdf` route, which returns HTTP 410 after expiry instead of exposing stale files through static serving.
 
-Cloud Run should grant the service account the minimum bucket and Firestore permissions required to create/read/update job documents, create objects, and sign/download result objects. Use a private bucket; do not make the result prefix public.
+Cloud Run should grant the service account the minimum bucket and Firestore permissions required to create/read/update job documents, create objects, sign URLs, and download original/result objects. Use a private bucket; do not make the result prefix public. Direct browser uploads require bucket CORS allowing `PUT` from the deployed Vercel origin; edit `infrastructure/gcp/gcs-cors.json` and apply `infrastructure/gcp/apply-gcs-cors.sh` after the web domain is known.
 
-## GCS lifecycle
+## GCS lifecycle and CORS
 
-Apply the checked-in lifecycle rule after creating the private bucket:
+Apply the checked-in lifecycle and CORS rules after creating the private bucket:
 
 ```powershell
 $env:GCS_BUCKET_NAME = "YOUR_PRIVATE_BUCKET"
 bash infrastructure/gcp/apply-gcs-lifecycle.sh
+bash infrastructure/gcp/apply-gcs-cors.sh
 ```
 
-The rule in `infrastructure/gcp/gcs-lifecycle.json` deletes objects under `staging/` and `output/` after one day. This is the closest bucket-native setting to the 30-minute product goal; use a scheduled cleanup job if exact 30-minute deletion is required.
+The lifecycle rule in `infrastructure/gcp/gcs-lifecycle.json` deletes objects under `staging/` and `output/` after one day. This is the closest bucket-native setting to the 30-minute product goal; use a scheduled cleanup job if exact 30-minute deletion is required.
+
+The CORS rule in `infrastructure/gcp/gcs-cors.json` must use the real Vercel web origin before applying. It allows browser `PUT` uploads to signed GCS URLs.
 
 ## Local container QA
 
@@ -93,16 +98,16 @@ Invoke-RestMethod http://localhost:8080/health
 
 For GCS/Firestore mode, also run the container with `STORAGE_BACKEND=gcs`, `GCS_BUCKET_NAME`, `JOB_STORE_BACKEND=firestore`, and credentials provided through Cloud Run service account or local ADC.
 
-Upload and conversion should be tested through the web uploader or with multipart `POST /v1/upload`.
+Upload and conversion should be tested through the web uploader. In GCS mode the frontend uses direct signed upload first; in local mode it automatically falls back to multipart `POST /v1/upload`.
 
 ## Cloud Run deployment
 
-The checked-in `.github/workflows/deploy-api-cloud-run.yml` builds the API image, pushes it to Artifact Registry, deploys it to Cloud Run, and smoke-tests `/health`. Configure these GitHub repository variables/secrets before enabling it:
+The checked-in `.github/workflows/deploy-api-cloud-run.yml` builds the API image, pushes it to Artifact Registry, deploys it to Cloud Run, and runs `scripts/smoke-api.mjs` against the deployed service. Configure these GitHub repository variables/secrets before enabling it:
 
 - vars: `GCP_PROJECT_ID`, `WEB_ORIGIN`, `GCS_BUCKET_NAME`, `CLOUD_RUN_API_SERVICE_ACCOUNT`
 - secrets: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT_EMAIL`
 
-The workflow deploys with `STORAGE_BACKEND=gcs` and `JOB_STORE_BACKEND=firestore`.
+The workflow deploys with `STORAGE_BACKEND=gcs` and `JOB_STORE_BACKEND=firestore`, then smoke-tests `/health`, invalid multipart upload handling, and direct-upload URL initiation.
 
 ## Current limitation
 

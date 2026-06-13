@@ -4,12 +4,13 @@ import { config } from "../config.js";
 
 const hwpContentType = "application/octet-stream";
 const pdfContentType = "application/pdf";
+const directUploadUrlTtlMs = 10 * 60 * 1000;
 
 type UploadKind = "original" | "result";
 
 let storageClient: Storage | undefined;
 
-function shouldUseGcs() {
+export function shouldUseGcs() {
   return config.storageBackend === "gcs";
 }
 
@@ -25,7 +26,7 @@ function getBucket() {
   return storageClient.bucket(config.gcsBucketName);
 }
 
-function createObjectPath(kind: UploadKind, jobId: string, fileName: string) {
+export function createObjectPath(kind: UploadKind, jobId: string, fileName: string) {
   const prefix = kind === "original" ? config.gcsOriginalPrefix : config.gcsResultPrefix;
   const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   return `${prefix}/${jobId}/${safeFileName}`;
@@ -43,6 +44,29 @@ async function uploadFile(localPath: string, objectPath: string, contentType: st
   });
 }
 
+export async function createOriginalUploadUrl(input: {
+  jobId: string;
+  originalFileName: string;
+}) {
+  if (!shouldUseGcs()) return undefined;
+
+  const objectPath = createObjectPath("original", input.jobId, input.originalFileName);
+  const [uploadUrl] = await getBucket().file(objectPath).getSignedUrl({
+    version: "v4",
+    action: "write",
+    expires: Date.now() + directUploadUrlTtlMs,
+    contentType: hwpContentType,
+  });
+
+  return {
+    objectPath,
+    uploadUrl,
+    headers: {
+      "Content-Type": hwpContentType,
+    },
+  };
+}
+
 export async function persistOriginalFile(input: {
   jobId: string;
   localPath: string;
@@ -53,6 +77,17 @@ export async function persistOriginalFile(input: {
   const objectPath = createObjectPath("original", input.jobId, input.originalFileName);
   await uploadFile(input.localPath, objectPath, hwpContentType);
   return objectPath;
+}
+
+export async function downloadOriginalFile(input: {
+  objectPath: string;
+  localPath: string;
+}) {
+  if (!shouldUseGcs()) return;
+
+  await getBucket().file(input.objectPath).download({
+    destination: input.localPath,
+  });
 }
 
 export async function publishResultFile(input: {

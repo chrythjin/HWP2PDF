@@ -4,6 +4,7 @@ This folder is the project documentation entry point for future OpenCode session
 
 ## Start here
 
+- `USER_SETUP_CHECKLIST.md` - plain-language checklist of external account, secret, deployment, and policy tasks the user must prepare.
 - `operations/api-cloud-run-runtime.md` - current API Docker/Cloud Run runtime, storage, job store, and deployment contract.
 - `../AGENTS.md` - compact repo-specific operating guide for agents.
 - `superpowers/specs/HWP2PDF-Blueprint.md` - original full product and architecture blueprint.
@@ -24,7 +25,7 @@ This folder is the project documentation entry point for future OpenCode session
 
 ## Current known gaps
 
-- GCS original/result persistence and Firestore job polling state are implemented, but actual GCP integration requires Cloud Run service account credentials, a private GCS bucket, and Firestore enabled in the target project.
+- GCS original/result persistence, direct signed browser uploads, and Firestore job polling state are implemented, but actual GCP integration requires Cloud Run service account credentials, a private GCS bucket, bucket CORS, and Firestore enabled in the target project.
 - LibreOffice is not installed in the current Windows development environment, so local surface QA verifies the clear converter configuration failure path rather than successful PDF output.
 - Docker image build and successful HWP-to-PDF conversion still need verification in Docker/GCP because Docker CLI is unavailable locally.
 
@@ -36,3 +37,4 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260613_181757_api-gcs-storage-boundary.md` - added configurable GCS original/result persistence and signed result URLs.
 - `sessions/20260613_190000_firestore-job-store-deploy.md` - added Firestore-backed job state, Cloud Run/Vercel deployment workflows, and GCS lifecycle config.
 - `sessions/20260613_191700_job-expiry-download-gate.md` - added job retention metadata and job-aware local result download expiry enforcement.
+- `sessions/20260613_193000_direct-gcs-upload.md` - added direct browser-to-GCS upload flow, fallback behavior, smoke script, CORS config, and user setup checklist.
