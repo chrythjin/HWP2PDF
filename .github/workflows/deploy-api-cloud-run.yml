@@ -19,10 +19,10 @@ permissions:
   id-token: write
 
 env:
-  REGION: asia-northeast3
+  REGION: ${{ vars.GCP_REGION || 'asia-northeast3' }}
   GAR_LOCATION: asia-northeast3
   GAR_REPOSITORY: hwp2pdf
-  SERVICE_NAME: hwp2pdf-api
+  SERVICE_NAME: ${{ vars.CLOUD_RUN_API_SERVICE || 'hwp2pdf-api' }}
 
 jobs:
   deploy:

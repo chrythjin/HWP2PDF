@@ -13,12 +13,13 @@
   - [ ] Cloud Storage
   - [ ] Firestore
 - [ ] GCS 버킷 이름을 정하거나 새 버킷을 만듭니다.
-- [ ] infrastructure/gcp/gcs-cors.json의 origin을 실제 Vercel 도메인으로 바꾸고 CORS 설정을 적용합니다.
+- [ ] `infrastructure/gcp/gcs-cors.json`의 `origin`을 실제 Vercel 도메인으로 바꾸고 CORS 설정을 적용합니다.
 
 ## 2. Cloud Run 실행 권한 준비
 
 - [ ] Cloud Run API가 사용할 서비스 계정을 정합니다.
-- [ ] 그 서비스 계정에 GCS 파일 생성/읽기/삭제/sign URL 권한을 줍니다.
+- [ ] 그 서비스 계정에 GCS 파일 생성/읽기/삭제 권한을 줍니다.
+- [ ] Cloud Run에서 GCS V4 signed URL을 만들 수 있도록 서비스 계정에 필요한 `signBlob` 권한(예: 서비스 계정 Token Creator 권한)을 부여합니다.
 - [ ] 그 서비스 계정에 Firestore 읽기/쓰기 권한을 줍니다.
 - [ ] GitHub Actions가 Cloud Run에 배포할 수 있도록 Workload Identity 또는 서비스 계정 키를 준비합니다.
 
@@ -34,7 +35,8 @@ API 배포용:
 - [ ] `CLOUD_RUN_API_SERVICE_ACCOUNT`
 - [ ] `GCS_BUCKET_NAME`
 - [ ] `WEB_ORIGIN` 예: 실제 Vercel 웹 주소
-- [ ] Workload Identity 또는 GCP service account credential secret
+- [ ] `GCP_WORKLOAD_IDENTITY_PROVIDER` secret
+- [ ] `GCP_SERVICE_ACCOUNT_EMAIL` secret
 
 Web 배포용:
 

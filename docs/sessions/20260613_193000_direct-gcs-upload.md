@@ -19,6 +19,7 @@ Added the production direct-upload path for browser-to-GCS uploads and saved a p
 - Added `scripts/smoke-api.mjs` and wired the Cloud Run workflow smoke test to check health, invalid multipart upload handling, and direct upload URL initiation.
 - Added GCS bucket CORS config and apply script for browser `PUT` uploads to signed URLs.
 - Updated runtime documentation for direct upload, CORS, fallback behavior, and smoke testing.
+- Aligned Cloud Run workflow variables with the user setup checklist and documented the `signBlob` permission needed for GCS V4 signed URLs.
 
 ## Verification
 
@@ -28,10 +29,10 @@ Added the production direct-upload path for browser-to-GCS uploads and saved a p
 - `pnpm -r build`: passed.
 - `pnpm --filter web lint`: passed.
 - `git diff --check`: passed.
-- Local API HTTP surface QA on port 18080 passed:
+- Local API HTTP surface QA on port 18080 passed and was re-run after workflow/documentation corrections:
   - `GET /health` returned ok.
   - `POST /v1/uploads/initiate` returned 409 in local storage mode, confirming direct-upload fallback behavior.
-  - Multipart `POST /v1/upload` with a `.hwp` fixture returned 202.
+  - Multipart `POST /v1/upload` with a `.hwp` fixture returned 202 and included `jobId` plus `expiresAt`.
 
 ## Not verified locally
 

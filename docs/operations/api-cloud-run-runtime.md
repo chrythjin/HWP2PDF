@@ -61,7 +61,7 @@ The API supports two upload paths: direct browser-to-GCS upload in GCS mode and 
 8. Each job records `expiresAt = createdAt + JOB_RETENTION_MINUTES`. Polling an expired job returns `status: "expired"` and hides the download URL.
 9. If the local backend is active, the job receives the existing `RESULT_URL_BASE/{jobId}.pdf` URL. Downloads are served through the job-aware `/v1/results/{jobId}.pdf` route, which returns HTTP 410 after expiry instead of exposing stale files through static serving.
 
-Cloud Run should grant the service account the minimum bucket and Firestore permissions required to create/read/update job documents, create objects, sign URLs, and download original/result objects. Use a private bucket; do not make the result prefix public. Direct browser uploads require bucket CORS allowing `PUT` from the deployed Vercel origin; edit `infrastructure/gcp/gcs-cors.json` and apply `infrastructure/gcp/apply-gcs-cors.sh` after the web domain is known.
+Cloud Run should grant the service account the minimum bucket and Firestore permissions required to create/read/update job documents, create/download objects, and sign GCS V4 URLs. In Cloud Run ADC, signed URL creation may require IAM signBlob permission such as Service Account Token Creator on the runtime service account. Use a private bucket; do not make the result prefix public. Direct browser uploads require bucket CORS allowing `PUT` from the deployed Vercel origin; edit `infrastructure/gcp/gcs-cors.json` and apply `infrastructure/gcp/apply-gcs-cors.sh` after the web domain is known.
 
 ## GCS lifecycle and CORS
 
@@ -104,7 +104,7 @@ Upload and conversion should be tested through the web uploader. In GCS mode the
 
 The checked-in `.github/workflows/deploy-api-cloud-run.yml` builds the API image, pushes it to Artifact Registry, deploys it to Cloud Run, and runs `scripts/smoke-api.mjs` against the deployed service. Configure these GitHub repository variables/secrets before enabling it:
 
-- vars: `GCP_PROJECT_ID`, `WEB_ORIGIN`, `GCS_BUCKET_NAME`, `CLOUD_RUN_API_SERVICE_ACCOUNT`
+- vars: `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_RUN_API_SERVICE`, `WEB_ORIGIN`, `GCS_BUCKET_NAME`, `CLOUD_RUN_API_SERVICE_ACCOUNT`
 - secrets: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT_EMAIL`
 
 The workflow deploys with `STORAGE_BACKEND=gcs` and `JOB_STORE_BACKEND=firestore`, then smoke-tests `/health`, invalid multipart upload handling, and direct-upload URL initiation.
