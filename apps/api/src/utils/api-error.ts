@@ -1,9 +1,4 @@
-export interface ApiErrorBody {
-  error: {
-    code: string;
-    message: string;
-  };
-}
+import type { ApiErrorBody } from "@hwp2pdf/shared";
 
 export class ApiError extends Error {
   constructor(

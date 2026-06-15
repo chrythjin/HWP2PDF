@@ -8,19 +8,14 @@ import {
   MAX_FILE_SIZE,
   MAX_POLLING_TIME,
   POLLING_INTERVAL,
+  PROGRESS,
+  type ApiErrorBody,
   type DirectUploadInitResponse,
   type JobStatusResponse,
   type UploadResponse,
   type UploadStatus,
   validateFile,
 } from "@hwp2pdf/shared";
-
-type ApiErrorBody = {
-  error?: {
-    message?: string;
-  };
-  message?: string;
-};
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
@@ -122,7 +117,7 @@ export default function DropzoneUploader() {
       const startPolling = (response: UploadResponse) => {
         setJobId(response.jobId);
         setStatus(response.status);
-        setProgress(60);
+        setProgress(PROGRESS.QUEUED);
         void pollJobStatus(response.jobId, Date.now(), uploadSession);
       };
 
@@ -136,7 +131,7 @@ export default function DropzoneUploader() {
 
           request.upload.onprogress = (event) => {
             if (!event.lengthComputable) return;
-            setProgress(Math.min(50, Math.max(5, Math.round((event.loaded / event.total) * 50))));
+            setProgress(Math.min(PROGRESS.UPLOAD_COMPLETE, Math.max(PROGRESS.UPLOAD_START, Math.round((event.loaded / event.total) * PROGRESS.UPLOAD_COMPLETE))));
           };
 
           request.onload = () => {
@@ -184,7 +179,7 @@ export default function DropzoneUploader() {
 
           request.upload.onprogress = (event) => {
             if (!event.lengthComputable) return;
-            setProgress(Math.min(50, Math.max(5, Math.round((event.loaded / event.total) * 50))));
+            setProgress(Math.min(PROGRESS.UPLOAD_COMPLETE, Math.max(PROGRESS.UPLOAD_START, Math.round((event.loaded / event.total) * PROGRESS.UPLOAD_COMPLETE))));
           };
 
           request.onload = () => {

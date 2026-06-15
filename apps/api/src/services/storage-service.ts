@@ -4,7 +4,7 @@ import { config } from "../config.js";
 
 const hwpContentType = "application/octet-stream";
 const pdfContentType = "application/pdf";
-const directUploadUrlTtlMs = 10 * 60 * 1000;
+export const directUploadUrlTtlMs = 10 * 60 * 1000;
 
 type UploadKind = "original" | "result";
 

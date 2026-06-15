@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import { PROGRESS } from "@hwp2pdf/shared";
 import { config } from "../config.js";
 import { updateJob } from "./job-store.js";
 import { publishResultFile } from "./storage-service.js";
@@ -14,7 +15,7 @@ export interface ConversionInput {
 export async function convertJobToPdf(input: ConversionInput) {
   await updateJob(input.jobId, {
     status: "processing",
-    progress: 70,
+    progress: PROGRESS.PROCESSING_START,
     message: "PDF 변환을 시작했습니다.",
   });
 
@@ -41,7 +42,7 @@ export async function convertJobToPdf(input: ConversionInput) {
 
     await updateJob(input.jobId, {
       status: "completed",
-      progress: 100,
+      progress: PROGRESS.COMPLETED,
       resultPath,
       resultObjectPath: result.objectPath,
       downloadUrl: result.downloadUrl,
@@ -50,7 +51,7 @@ export async function convertJobToPdf(input: ConversionInput) {
   } catch (error) {
     await updateJob(input.jobId, {
       status: "failed",
-      progress: 0,
+      progress: PROGRESS.FAILED,
       message: error instanceof Error ? error.message : "변환에 실패했습니다.",
     });
   } finally {

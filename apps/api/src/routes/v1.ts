@@ -3,6 +3,7 @@ import path from "node:path";
 import { Router } from "express";
 import {
   API_ROUTES,
+  PROGRESS,
   type DirectUploadCompleteRequest,
   type DirectUploadInitRequest,
   type DirectUploadInitResponse,
@@ -17,6 +18,7 @@ import { createJob, getJob } from "../services/job-store.js";
 import { convertJobToPdf } from "../services/conversion-service.js";
 import {
   createOriginalUploadUrl,
+  directUploadUrlTtlMs,
   downloadOriginalFile,
   persistOriginalFile,
   removeLocalResultFile,
@@ -64,7 +66,7 @@ router.post(API_ROUTES.UPLOADS_INITIATE, async (request, response, next) => {
       jobId,
       uploadUrl: upload.uploadUrl,
       objectPath: upload.objectPath,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      expiresAt: new Date(Date.now() + directUploadUrlTtlMs).toISOString(),
       headers: upload.headers,
     };
 
@@ -107,7 +109,7 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, async (request, response, next) => {
       originalObjectPath: body.objectPath,
       expiresAt,
       status: "queued",
-      progress: 60,
+      progress: PROGRESS.QUEUED,
       message: "변환 작업이 대기열에 등록되었습니다.",
     });
 
@@ -151,7 +153,7 @@ router.post(API_ROUTES.UPLOAD, handleUploadMiddleware, async (request, response,
       originalObjectPath,
       expiresAt,
       status: "queued",
-      progress: 60,
+      progress: PROGRESS.QUEUED,
       message: "변환 작업이 대기열에 등록되었습니다.",
     });
 
