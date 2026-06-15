@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "indexHash": "",
+  "sources": {
+    "20260613-004620-llm-wiki-init.md": {
+      "hash": "a80f677bafe5db0218b40b5151b7126a2a4500682560bbbdd55744e1c03cac23",
+      "concepts": [
+        "pnpm-monorepo-workspace-configuration",
+        "shared-package-architecture",
+        "hwp-file-upload-validation",
+        "nextjs-16-frontend-package",
+        "pnpm-recursive-build-verification",
+        "monorepo-workspace-scripts"
+      ],
+      "compiledAt": "2026-06-12T16:40:09.070Z"
+    },
+    "agents.md": {
+      "hash": "879b67ab5a61735d806a74e6b83f30543c76c0f049d6aafb854a6c8c09cb3ced",
+      "concepts": [
+        "pnpm-workspace-monorepo",
+        "nextjs-1629-frontend",
+        "shared-typescript-contracts-package",
+        "cloud-run-conversion-backend",
+        "session-documentation-rule",
+        "build-verification-requirement"
+      ],
+      "compiledAt": "2026-06-12T16:40:09.075Z"
+    },
+    "hwp2pdf-blueprint.md": {
+      "hash": "07f1ca8e2af5ebecf2455e6e153d0ef0aa29f673c9bae5904f1210eab5123306",
+      "concepts": [
+        "h2orestart-extension",
+        "asynchronous-job-pattern-for-file-processing",
+        "presigned-url-upload-pattern",
+        "cloud-run-document-conversion-architecture",
+        "gcs-lifecycle-rules",
+        "serverless-rate-limiting",
+        "vercel-oidc-federation",
+        "hwp-file-format-conversion-challenges"
+      ],
+      "compiledAt": "2026-06-12T16:40:09.084Z"
+    },
+    "hwp2pdf-plan-v1.md": {
+      "hash": "225da4c29a44ee40130d861c8aa50970a970d7c451ded807b85259987a7a637a",
+      "concepts": [
+        "hwp2pdf-service-architecture",
+        "h2orestart-extension",
+        "libreoffice-headless-conversion",
+        "presigned-url-security-pattern",
+        "redis-job-queue-system",
+        "gcs-lifecycle-management",
+        "upstash-rate-limiting",
+        "pnpm-monorepo-structure"
+      ],
+      "compiledAt": "2026-06-12T16:40:09.092Z"
+    },
+    "index.md": {
+      "hash": "63ba4ac6b50b28eefc6887bb78a3169901dd99d6a49b240fb7dc9a82c03173a9",
+      "concepts": [
+        "hwp2pdf-project",
+        "llm-wiki-documentation-system",
+        "pnpm-workspace-architecture",
+        "nextjs-1629-frontend",
+        "verified-build-commands",
+        "documentation-gaps",
+        "session-based-documentation"
+      ],
+      "compiledAt": "2026-06-12T16:40:09.101Z"
+    }
+  },
+  "frozenSlugs": []
+}

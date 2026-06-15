@@ -1,0 +1,18 @@
+<think>Good. Now I have all the context I need. Let me produce the compartment.
+
+One compartment: messages 433-445
+Title: "User deployment checklist saved; signed upload contract and storage service extended"
+Episode type: `feature,docs`
+Importance: 52 — moderate routine work: checklist creation (routine docs) + contract extension (feature work). Not as high as the job expiry work, but more substantial than pure housekeeping.
+
+Let me write P2 first, then expand to P1, condense to P3/P4.
+
+P2:
+사용자 요청에 따라 배포 체크리스트를 `docs/USER_SETUP_CHECKLIST.md`로 저장했다. GCP/Vercel 준비 항목 6개 카테고리(프로젝트, 권한, Secrets, Vercel 연결, Docker 검증, 운영 정책)를 항목별로 정리했고, 에이전트가 계속 진행할 수 있는 일도 함께 문서화했다. 
+
+이후 shared 계약에 `DirectUploadInitRequest`/`DirectUploadInitResponse`/`DirectUploadCompleteRequest` 타입을 추가하고, API storage-service에 `createOriginalUploadUrl`과 `downloadOriginalFile` 함수를 구현했다. 기존 multipart 업로드 fallback은 유지하면서 GCS 모드에서만 직접 업로드를 활용하는 방식으로 설계했다.
+
+이제 P1로 확장하면 사용자가 직접 해야 할 일과 에이전트가 대신 진행할 수 있는 일을 분리해서 정리하는 게 목표였다. 사용자가 요청한 내용을 확인한 뒤 관련 파일들을 살펴보니 drift가 있어서 signed upload를 넣기 전에 먼저 정리가 필요했다. shared 계약에 직접 업로드 관련 타입들을 추가하고, API 저장소 서비스에 signed 업로드 URL 발급과 GCS 원본 다운로드 함수를 구현했다. 이제 P3으로 정리하면 사용자가 요청한 배포 체크리스트를 `docs/USER_SETUP_CHECKLIST.md`에 저장하고, 에이전트가 계속 진행할 수 있는 작업范围도 함께 문서화했다.
+
+공유 계약에 직접 업로드 타입들을 추가하고, storage-service에 signed URL 발급과 GCS 다운로드 함수를 구현했다. P4에서는 이 모든 구현들이 self-contained하게 들어가고, 관련 파일 경로들이 포함되어 있다.
+</think>

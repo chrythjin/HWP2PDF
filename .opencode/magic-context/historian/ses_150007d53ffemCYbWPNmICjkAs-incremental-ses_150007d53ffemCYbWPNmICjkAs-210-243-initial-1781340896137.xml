@@ -1,0 +1,83 @@
+<think>Let me analyze the new messages (210-243) to understand what happened in this chunk.
+
+The chunk continues the DropzoneUploader mock → real API work from the previous compartment (200-209). Key events:
+
+1. The recursive timer approach conflicted with lint rules, so they rewrote it as a cancellable polling loop with session tokens
+2. PowerShell string escaping caused a substitution command to fail, so they rewrote the entire component
+3. Rebuilt web, relinted, passed build/lint
+4. Found that `components/upload/DropzoneUploader.tsx` is not imported anywhere but has lint warnings - cleaned up unused variables
+5. Updated docs to reflect "API connected" status
+
+
+6. Resolved port conflicts by configuring `NEXT_PUBLIC_API_BASE_URL=http://localhost:18080` in `.env.local` to route API requests to the correct endpoint instead of the web server
+7. Completed the browser QA verification confirming that invalid file rejection and `.hwp` upload both display the LibreOffice not installed error message properly
+
+Now I need to assess whether this work warrants extraction as a `causal_incident` or `trajectory_correction`. The `.env.local` port issue wasn't a constraint discovery—it was a configuration mistake I fixed. The recursive timer lint conflict was resolved by rewriting the polling approach, but that's implementation detail, not a meaningful strategy pivot. The work appears to be routine bug fixing and feature completion without any significant trajectory changes, so I'm not seeing strong evidence for event extraction.
+
+This compartment continues the DropzoneUploader API connection work from the previous session (200-209), adding the `.env.local` fix, browser QA completion, and docs updates. It's the same objective—just more refined. I should treat it as a single arc and merge it with the prior compartment rather than create a separate one. I need to check if any U: lines from this chunk contain durable directives, decisions, or constraints worth preserving. Looking through the messages, the user simply said "이어서 작업 계속해줘" which is just a continuation prompt with no specific new directives, so there are no U: lines to extract.
+
+The real work here is consolidating the prior compartment's findings: the PowerShell escaping issue that required a full component rewrite, the unused duplicate component that was cleaned up, the `.env.local` misconfiguration that was causing 405 errors on file uploads, and the successful browser QA verification. Since these are all continuations of the same work unit, I should merge them back into the previous compartment rather than create a separate one. However, since this is a fresh pass for the historian, I need to emit the complete updated version of the merged compartment. Looking at what actually happened: the polling implementation was refined and stabilized, the env configuration was corrected, and the feature was completed and verified. This represents the full resolution of the work that started in compartment 200-209, so I'll merge both segments into a single compartment and emit it with the complete narrative and facts. Looking at what was actually produced here—the recursive timer approach conflicted with lint rules, so I rewrote it as a cancellable polling loop using session tokens instead. The PowerShell escaping issue forced a full component rewrite rather than incremental changes. I also cleaned up an unused duplicate component and fixed the `.env.local` configuration that was pointing to the wrong port, which was causing the 405 errors during browser testing. All of this gets synthesized into the merged compartment about the DropzoneUploader API connection work, with the completion QA as the keyoutcome.</think>
+
+Looking at messages 210-243, this is a direct continuation of compartment 200-209 (the same `DropzoneUploader` mock → real API work). I'll merge them into a single completed compartment.
+
+```xml
+<output>
+<compartments>
+<compartment start="200" end="243" title="DropzoneUploader mock → real API upload + polling flow" episode_type="feature,bug" importance="66">
+<p1>
+DropzoneUploader의 mock polling을 실제 API 업로드 + polling으로 교체하는 작업을 완료했다. 컴포넌트를 처음 작성했으나 React Hooks 재귀 콜백이 lint 규칙과 충돌했고, PowerShell 문자열 이스케이프 문제로 치환 명령도 실패했다. 전체 컴포넌트를 안전하게 다시 작성해 polling을 취소 가능한 세션 토큰 기반 async loop로 재구현했다.
+
+`components/upload/DropzoneUploader.tsx`는 현재 페이지에서 import되지 않는 미사용 중복이었다. lint 경고만 정리하고, docs 상태를 "mock"에서 "API 연동됨"으로 갱신했다.
+
+브라우저 QA에서 `.hwp` 업로드가 405로 실패했다. 원인은 `apps/web/.env.local`의 `NEXT_PUBLIC_API_BASE_URL`이8080을 고정하고 있어서, dev 서버 실행 시 주입한 18080 값이 무시된 것이었다. `.env.local`의 포트를18080으로 수정한 뒤 웹 dev 서버를 재시작했다. 재시작 시 이전 프로세스가 3000을 계속 점유하고 있었으므로 해당 프로세스를 종료하고 새로 띄웠다.
+
+최종 브라우저 QA 확인: 잘못된 파일(.txt) 거부 UI 정상 동작 확인, `.hwp` 업로드 → API 요청 → LibreOffice 미설치 환경에서의 실패 메시지 UI 정상 표시 확인. 전체 워크스페이스 `pnpm -r build` 통과, web lint 통과.
+
+남은 작업 인벤토리: (1) Cloud Run + LibreOffice 런타임 검증, (2) GCS 저장소 구현, (3) 운영용 job 상태 저장소, (4) Cloud Run 배포 구성, (5) 보안/제한 강화, (6) 테스트/QA.
+</p1>
+<p2>
+DropzoneUploader mock → 실제 API 연동을 완료했다. 재귀 타이머 lint 충돌로 async loop polling으로 재작성했고, `.env.local` 포트 오류(8080→18080)를 수정해405 버그를 해결했다. 브라우저 QA에서 잘못된 파일 거부, `.hwp` 업로드 → polling → 실패 메시지까지 모두 확인. `pnpm -r build` 및 lint 통과.
+</p2>
+<p3>
+DropzoneUploader를 실제 API에 연결하고 브라우저 QA까지 완료했다. `.env.local` 포트 구성 오류로405가 발생했으나 수정 해결했다.
+</p3>
+<p4>DropzoneUploader; async polling loop; .env.local port fix; browser QA; commit 5c67595</p4>
+</compartment>
+</compartments>
+<facts>
+<PROJECT_RULES>
+* HWP2PDF API dev verification uses port 18080 when 8080 is occupied; production code retains Cloud Run contract port 8080.
+</PROJECT_RULES>
+<ARCHITECTURE>
+* HWP2PDF frontend DropzoneUploader uses a local UploaderStatus type ("idle" | "uploading" | "processing" | "completed" | "failed") separate from the shared UploadStatus type.
+</ARCHITECTURE>
+<CONFIG_VALUES>
+* apps/api dev verification port: 18080 (8080 occupied by bifrost-http).
+* HWP2PDF MVP upload policy: `.hwp` only, one file at a time, 20MB maximum.
+* MAX_POLLING_TIME: 5 minutes (exported from packages/shared).
+* POLLING_INTERVAL: 2000ms (exported from packages/shared).
+* API_ROUTES: UPLOAD: "/v1/upload", JOBS: "/v1/jobs", HEALTH: "/health" — defined in packages/shared and used by apps/api routes/v1.ts.
+</CONFIG_VALUES>
+<NAMING>
+* HWP2PDF detailed implementation plan path: docs/superpowers/specs/HWP2PDF-Plan-v1.md.
+* HWP2PDF blueprint document path: docs/superpowers/specs/HWP2PDF-Blueprint.md.
+* HWP2PDF GitHub repository: chrythjin/HWP2PDF.
+</NAMING>
+</facts>
+<events>
+<causal_incident at_compartment="1">
+  <summary>`.env.local` fixed port caused 405 on file uploads during browser QA.</summary>
+  <affected_surface>host_integration</affected_surface>
+  <symptom>`.hwp` upload returned 405 in browser QA.</symptom>
+  <cause_summary>`apps/web/.env.local` hardcoded NEXT_PUBLIC_API_BASE_URL=8080, overriding the dev-injected 18080 value and routing API POSTs to the Next.js dev server instead of the API.</cause_summary>
+  <disposition>fixed</disposition>
+  <evidence>Port 8080 was occupied by bifrost-http; the injected18080 value was ignored because .env.local takes precedence.</evidence>
+  <fix_summary>Changed NEXT_PUBLIC_API_BASE_URL in .env.local from 8080 to 18080 and restarted the web dev server.</fix_summary>
+</causal_incident>
+</events>
+<meta>
+<messages_processed>210-243</messages_processed>
+<unprocessed_from>244</unprocessed_from>
+</meta>
+</output>
+```

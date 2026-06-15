@@ -1,0 +1,105 @@
+<think>I keep reading the same file. I need to WRITE the updated content. Let me stop reading and start writing.
+
+The file I need to write to is `C:\NEW PRG\HWP2PDF\apps\api\src\services\job-store.ts`.
+
+I need to write the complete new implementation. Let me think about what to write:
+
+```typescript
+import { Redis } from "@upstash/redis";
+import { config } from "../config.js";
+import { UploadStatus } from "@hwp2pdf/shared";
+
+export interface JobRecord {
+  jobId: string;
+  originalFileName: string;
+  sourcePath: string;
+  originalObjectPath?: string;
+  resultPath?: string;
+  resultObjectPath?: string;
+  status: UploadStatus;
+  progress: number;
+  message?: string;
+  downloadUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const JOB_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+
+// Redis client — only created when UPSTASH_REDIS_REST_URL is set
+let redis: Redis | undefined;
+
+function getRedis(): Redis | undefined {
+  if (!config.upstashRedisUrl) return undefined;
+  redis ??= new Redis({
+    url: config.upstashRedisUrl,
+    token: config.upstashRedisToken,
+  });
+  return redis;
+}
+
+function jobKey(jobId: string): string {
+  return `job:${jobId}`;
+}
+
+// In-memory fallback for local development
+const localJobs = new Map<string, JobRecord>();
+
+export async function createJob(
+  input: Omit<JobRecord, "createdAt" | "updatedAt">
+): Promise<JobRecord> {
+  const now = new Date().toISOString();
+  const job: JobRecord = {
+    ...input,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const client = getRedis();
+  if (client) {
+    await client.set(jobKey(job.jobId), job, { ex: JOB_TTL_SECONDS });
+  } else {
+    localJobs.set(job.jobId, job);
+  }
+
+  return job;
+}
+
+export async function getJob(jobId: string): Promise<JobRecord | undefined> {
+  const client = getRedis();
+  if (client) {
+    const data = await client.get<JobRecord>(jobKey(jobId));
+    return data ?? undefined;
+  }
+  return localJobs.get(jobId);
+}
+
+export async function updateJob(
+  jobId: string,
+  patch: Partial<Omit<JobRecord, "jobId" | "createdAt">>
+): Promise<JobRecord | undefined> {
+  const current = await getJob(jobId);
+  if (!current) return undefined;
+
+  const updated: JobRecord = {
+    ...current,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const client = getRedis();
+  if (client) {
+    await client.set(jobKey(jobId), updated, { ex: JOB_TTL_SECONDS });
+  } else {
+    localJobs.set(jobId, updated);
+  }
+
+  return updated;
+}
+```
+
+I'm setting up a Redis-backed job store with an in-memory fallback for local development. The `createJob` function persists to Redis with a 24-hour TTL when available, while `getJob` retrieves from Redis or falls back to the local Map. The `updateJob` function merges updates with the existing job record and persists the changes using the same TTLstrategy.</think>
+
+
+
+I need to write the files. Let me write the updated `job-store.ts` first, then the other files.
