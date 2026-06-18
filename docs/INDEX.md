@@ -4,6 +4,7 @@ This folder is the project documentation entry point for future OpenCode session
 
 ## Start here
 
+- `DEPLOYMENT_GUIDE.md` - step-by-step beginner-friendly deployment guide (GCP + Cloud Run + Vercel, ~1.5 hours).
 - `USER_SETUP_CHECKLIST.md` - plain-language checklist of external account, secret, deployment, and policy tasks the user must prepare.
 - `operations/api-cloud-run-runtime.md` - current API Docker/Cloud Run runtime, storage, job store, and deployment contract.
 - `../AGENTS.md` - compact repo-specific operating guide for agents.
@@ -40,3 +41,4 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260613_193000_direct-gcs-upload.md` - added direct browser-to-GCS upload flow, fallback behavior, smoke script, CORS config, and user setup checklist.
 - `sessions/20260613_201000_deployment-workflow-preflight.md` - added deployment workflow preflight gates so missing GCP/Vercel secrets skip deployment instead of failing pushes.
 - `sessions/20260615_020400_test-infra-shared-validation.md` - added Vitest infrastructure, baseline tests, and shared validation refactor coverage.
+- `sessions/20260618_155921_deployment-guide.md` - added beginner-friendly end-to-end deployment guide (GCP + Cloud Run + Vercel) and surfaced it in the start-here list.
