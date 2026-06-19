@@ -1,6 +1,11 @@
 [
   {
-    "origin": ["https://hwp2pdf-phi.vercel.app"],
+    "origin": [
+      "https://hwp2pdf-phi.vercel.app",
+      "https://hwp2pdf-hwp2pdf.vercel.app",
+      "https://hwp2pdf-git-main-hwp2pdf.vercel.app",
+      "http://localhost:3000"
+    ],
     "method": ["PUT"],
     "responseHeader": ["Content-Type"],
     "maxAgeSeconds": 3600

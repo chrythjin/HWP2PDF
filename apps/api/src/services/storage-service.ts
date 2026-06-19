@@ -85,9 +85,16 @@ export async function downloadOriginalFile(input: {
 }) {
   if (!shouldUseGcs()) return;
 
-  await getBucket().file(input.objectPath).download({
-    destination: input.localPath,
-  });
+  try {
+    await getBucket().file(input.objectPath).download({
+      destination: input.localPath,
+    });
+  } catch (error) {
+    throw new Error(
+      `GCS에서 원본 파일을 다운로드할 수 없습니다. objectPath=${input.objectPath}. 파일이 브라우저에서 GCS로 업로드되었는지, CORS 설정이 올바른지 확인하세요.`,
+      { cause: error },
+    );
+  }
 }
 
 export async function publishResultFile(input: {
