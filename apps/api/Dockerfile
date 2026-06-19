@@ -42,9 +42,9 @@ RUN apt-get update \
     curl \
     unzip \
     openjdk-17-jre-headless \
-  && mkdir -p /usr/lib/libreoffice/share/extensions/H2Orestart \
   && curl -fsSL $H2ORESTART_URL -o /tmp/H2Orestart.oxt \
-  && unzip -o /tmp/H2Orestart.oxt -d /usr/lib/libreoffice/share/extensions/H2Orestart \
+  && mkdir -p /usr/lib/libreoffice/share/extensions \
+  && /usr/lib/libreoffice/program/unopkg add --shared /tmp/H2Orestart.oxt \
   && rm -f /tmp/H2Orestart.oxt \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 hwp2pdf \

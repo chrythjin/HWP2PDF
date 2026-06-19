@@ -80,6 +80,11 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
       ]);
 
       let stderr = "";
+      let stdout = "";
+
+      process.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
 
       process.stderr.on("data", (chunk: Buffer) => {
         stderr += chunk.toString("utf8");
@@ -95,7 +100,8 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
           return;
         }
 
-        reject(new Error(stderr.trim() || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`));
+        const details = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").slice(0, 2000);
+        reject(new Error(details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`));
       });
     });
   } finally {
