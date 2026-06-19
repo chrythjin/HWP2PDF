@@ -24,6 +24,8 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV LIBREOFFICE_BIN=soffice
 ENV H2ORESTART_URL=https://github.com/ebandal/H2Orestart/releases/download/v0.7.12/H2Orestart.oxt
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
 ENV UPLOAD_DIR=/tmp/hwp2pdf/uploads
 ENV RESULT_DIR=/tmp/hwp2pdf/results
 WORKDIR /app
@@ -32,12 +34,14 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     libreoffice \
     libreoffice-writer \
+    libreoffice-java-common \
     fonts-nanum \
     fonts-noto-cjk \
     fonts-unfonts-core \
     ca-certificates \
     curl \
     unzip \
+    openjdk-17-jre-headless \
   && mkdir -p /usr/lib/libreoffice/share/extensions/H2Orestart \
   && curl -fsSL $H2ORESTART_URL -o /tmp/H2Orestart.oxt \
   && unzip -o /tmp/H2Orestart.oxt -d /usr/lib/libreoffice/share/extensions/H2Orestart \
