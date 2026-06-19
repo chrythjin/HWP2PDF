@@ -1,0 +1,218 @@
+{
+  "communities": {
+    "0": [
+      "app_layout_rootlayout"
+    ],
+    "1": [
+      "app_page_home"
+    ],
+    "2": [
+      "middleware_error_handler_errorhandler"
+    ],
+    "3": [
+      "middleware_error_handler_notfoundhandler"
+    ],
+    "4": [
+      "middleware_request_id_requestidmiddleware"
+    ],
+    "5": [
+      "middleware_upload_handleuploadmiddleware"
+    ],
+    "6": [
+      "services_conversion_service_conversioninput"
+    ],
+    "7": [
+      "services_conversion_service_convertjobtopdf"
+    ],
+    "8": [
+      "services_job_store_createjob"
+    ],
+    "9": [
+      "services_job_store_createjobinput"
+    ],
+    "10": [
+      "services_job_store_getjob"
+    ],
+    "11": [
+      "services_job_store_jobrecord"
+    ],
+    "12": [
+      "services_job_store_updatejob"
+    ],
+    "13": [
+      "services_job_store_updatejobpatch"
+    ],
+    "14": [
+      "services_storage_service_createobjectpath"
+    ],
+    "15": [
+      "services_storage_service_createoriginaluploadurl"
+    ],
+    "16": [
+      "services_storage_service_downloadoriginalfile"
+    ],
+    "17": [
+      "services_storage_service_persistoriginalfile"
+    ],
+    "18": [
+      "services_storage_service_publishresultfile"
+    ],
+    "19": [
+      "services_storage_service_removelocalresultfile"
+    ],
+    "20": [
+      "services_storage_service_shouldusegcs"
+    ],
+    "21": [
+      "src_app_createapp"
+    ],
+    "22": [
+      "src_index_apierrorbody"
+    ],
+    "23": [
+      "src_index_directuploadcompleterequest"
+    ],
+    "24": [
+      "src_index_directuploadinitrequest"
+    ],
+    "25": [
+      "src_index_directuploadinitresponse"
+    ],
+    "26": [
+      "src_index_filevalidationresult"
+    ],
+    "27": [
+      "src_index_jobstatusresponse"
+    ],
+    "28": [
+      "src_index_uploadresponse"
+    ],
+    "29": [
+      "src_index_uploadstatus"
+    ],
+    "30": [
+      "src_index_validatefile"
+    ],
+    "31": [
+      "src_index_validatefileextension"
+    ],
+    "32": [
+      "src_index_validatefilesize"
+    ],
+    "33": [
+      "src_job_types_allowedextension"
+    ],
+    "34": [
+      "src_validation_getfileextension"
+    ],
+    "35": [
+      "src_validation_ishwpfile"
+    ],
+    "36": [
+      "utils_api_error_apierror"
+    ],
+    "37": [
+      "utils_api_error_toapierrorbody"
+    ]
+  },
+  "cohesion": {
+    "0": 1.0,
+    "1": 1.0,
+    "2": 1.0,
+    "3": 1.0,
+    "4": 1.0,
+    "5": 1.0,
+    "6": 1.0,
+    "7": 1.0,
+    "8": 1.0,
+    "9": 1.0,
+    "10": 1.0,
+    "11": 1.0,
+    "12": 1.0,
+    "13": 1.0,
+    "14": 1.0,
+    "15": 1.0,
+    "16": 1.0,
+    "17": 1.0,
+    "18": 1.0,
+    "19": 1.0,
+    "20": 1.0,
+    "21": 1.0,
+    "22": 1.0,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0,
+    "26": 1.0,
+    "27": 1.0,
+    "28": 1.0,
+    "29": 1.0,
+    "30": 1.0,
+    "31": 1.0,
+    "32": 1.0,
+    "33": 1.0,
+    "34": 1.0,
+    "35": 1.0,
+    "36": 1.0,
+    "37": 1.0
+  },
+  "gods": [
+    {
+      "id": "src_app_createapp",
+      "label": "createApp",
+      "degree": 0
+    },
+    {
+      "id": "middleware_error_handler_notfoundhandler",
+      "label": "notFoundHandler",
+      "degree": 0
+    },
+    {
+      "id": "middleware_error_handler_errorhandler",
+      "label": "errorHandler",
+      "degree": 0
+    },
+    {
+      "id": "middleware_request_id_requestidmiddleware",
+      "label": "requestIdMiddleware",
+      "degree": 0
+    },
+    {
+      "id": "middleware_upload_handleuploadmiddleware",
+      "label": "handleUploadMiddleware",
+      "degree": 0
+    },
+    {
+      "id": "services_conversion_service_conversioninput",
+      "label": "ConversionInput",
+      "degree": 0
+    },
+    {
+      "id": "services_conversion_service_convertjobtopdf",
+      "label": "convertJobToPdf",
+      "degree": 0
+    },
+    {
+      "id": "services_job_store_jobrecord",
+      "label": "JobRecord",
+      "degree": 0
+    },
+    {
+      "id": "services_job_store_createjobinput",
+      "label": "CreateJobInput",
+      "degree": 0
+    },
+    {
+      "id": "services_job_store_updatejobpatch",
+      "label": "UpdateJobPatch",
+      "degree": 0
+    }
+  ],
+  "surprises": [],
+  "questions": [
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `createApp`, `notFoundHandler`, `errorHandler` to the rest of the system?",
+      "why": "38 weakly-connected nodes found - possible documentation gaps or missing edges."
+    }
+  ]
+}
