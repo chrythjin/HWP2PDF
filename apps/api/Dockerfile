@@ -37,6 +37,7 @@ RUN apt-get update \
     fonts-unfonts-core \
     ca-certificates \
     curl \
+    default-jre-headless \
   && curl -fsSL $H2ORESTART_URL -o /tmp/H2Orestart.oxt \
   && unopkg add --shared /tmp/H2Orestart.oxt \
   && rm -f /tmp/H2Orestart.oxt \
