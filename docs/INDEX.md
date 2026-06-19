@@ -29,7 +29,7 @@ This folder is the project documentation entry point for future OpenCode session
 - GCS original/result persistence, direct signed browser uploads, and Firestore job polling state are implemented, but actual GCP integration requires Cloud Run service account credentials, a private GCS bucket, bucket CORS, and Firestore enabled in the target project.
 - LibreOffice is not installed in the current Windows development environment, so local surface QA verifies the clear converter configuration failure path rather than successful PDF output.
 - Docker image build and successful HWP-to-PDF conversion still need verification in Docker/GCP because Docker CLI is unavailable locally.
-- The Vercel frontend project at `https://hwp2pdf-phi.vercel.app` currently serves `404 NOT_FOUND` because the required Vercel secrets/variables and project settings (Root Directory, Framework Preset, Build Command, Output Directory) are not yet correctly configured; see `sessions/20260619_232000_vercel-404-diagnosis.md`.
+- The Vercel frontend project at `https://hwp2pdf-phi.vercel.app` previously served `404 NOT_FOUND` and then a rate-limit error on `/v1/uploads/complete`; both were resolved by correcting Vercel project settings / `vercel.json` and by adding a Cloud Run-aware `keyGenerator` to `express-rate-limit`. See `sessions/20260619_235000_vercel-404-and-rate-limit-fix.md`.
 
 ## Session notes
 
@@ -46,4 +46,5 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260619_000000_graphify-rebuild-semantic-extraction.md` - rebuilt knowledge graph: 38→204 nodes, 27→251 edges, 61 communities (76% extracted, 23% inferred). Re-extracted missing chunk_02 (22 files) and chunk_09 (window.svg), manually merged all 9 sem.json chunks, ran graphify cluster-only.
 - `sessions/20260619_231500_cloud-run-vercel-deploy.md` - completed GCP Cloud Run and Vercel production deployments, fixed Artifact Registry IAM issues, resolved Docker LibreOffice JRE extension errors, and resolved Vercel Routing/Redeploy configurations.
 - `sessions/20260619_232000_vercel-404-diagnosis.md` - diagnosed live `404 NOT_FOUND` on `https://hwp2pdf-phi.vercel.app`; verified Cloud Run API is healthy and identified missing/correct Vercel project settings and GitHub Actions secrets as the root cause.
+- `sessions/20260619_235000_vercel-404-and-rate-limit-fix.md` - fixed Vercel 404 by adding `apps/web/vercel.json`, aligning branch and dashboard settings, and fixed Cloud Run `500` on `/v1/uploads/complete` by adding a Cloud Run-aware `keyGenerator` to `express-rate-limit`.
 
