@@ -24,6 +24,13 @@ export async function createApp() {
       limit: config.rateLimitMax,
       standardHeaders: "draft-8",
       legacyHeaders: false,
+      keyGenerator: (request) => {
+        const forwarded = request.headers["x-forwarded-for"];
+        if (typeof forwarded === "string") {
+          return forwarded.split(",")[0].trim();
+        }
+        return request.ip ?? "unknown";
+      },
       message: {
         error: {
           code: "rate_limit_exceeded",
