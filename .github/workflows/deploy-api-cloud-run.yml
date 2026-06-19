@@ -33,10 +33,10 @@ jobs:
       - name: Check deployment configuration
         id: check
         env:
-          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-          CLOUD_RUN_API_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}
-          GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
-          WEB_ORIGIN: ${{ vars.WEB_ORIGIN }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID }}
+          CLOUD_RUN_API_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL || secrets.CLOUD_RUN_API_SERVICE_ACCOUNT || vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}
+          GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME || vars.GCS_BUCKET_NAME }}
+          WEB_ORIGIN: ${{ secrets.WEB_ORIGIN || vars.WEB_ORIGIN }}
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
           missing=()
@@ -84,7 +84,7 @@ jobs:
 
       - name: Build and push API image
         run: |
-          IMAGE="${GAR_LOCATION}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${GAR_REPOSITORY}/${SERVICE_NAME}:${{ github.sha }}"
+          IMAGE="${GAR_LOCATION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID }}/${GAR_REPOSITORY}/${SERVICE_NAME}:${{ github.sha }}"
           docker build -f apps/api/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
@@ -102,11 +102,11 @@ jobs:
             --timeout 300 \
             --min-instances 0 \
             --max-instances 10 \
-            --service-account "${{ vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}" \
+            --service-account "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL || secrets.CLOUD_RUN_API_SERVICE_ACCOUNT || vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}" \
             --set-env-vars NODE_ENV=production \
-            --set-env-vars CORS_ORIGIN="${{ vars.WEB_ORIGIN }}" \
+            --set-env-vars CORS_ORIGIN="${{ secrets.WEB_ORIGIN || vars.WEB_ORIGIN }}" \
             --set-env-vars STORAGE_BACKEND=gcs \
-            --set-env-vars GCS_BUCKET_NAME="${{ vars.GCS_BUCKET_NAME }}" \
+            --set-env-vars GCS_BUCKET_NAME="${{ secrets.GCS_BUCKET_NAME || vars.GCS_BUCKET_NAME }}" \
             --set-env-vars GCS_ORIGINAL_PREFIX="staging" \
             --set-env-vars GCS_RESULT_PREFIX="output" \
             --set-env-vars SIGNED_DOWNLOAD_URL_TTL_MINUTES="15" \
