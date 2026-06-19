@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { config } from "./config.js";
 import { router } from "./routes/v1.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
@@ -29,7 +29,7 @@ export async function createApp() {
         if (typeof forwarded === "string") {
           return forwarded.split(",")[0].trim();
         }
-        return request.ip ?? "unknown";
+        return ipKeyGenerator(request.ip ?? "unknown");
       },
       message: {
         error: {
