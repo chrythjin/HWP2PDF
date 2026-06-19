@@ -26,8 +26,6 @@ ENV LIBREOFFICE_BIN=soffice
 ENV H2ORESTART_URL=https://github.com/ebandal/H2Orestart/releases/download/v0.7.12/H2Orestart.oxt
 ENV UPLOAD_DIR=/tmp/hwp2pdf/uploads
 ENV RESULT_DIR=/tmp/hwp2pdf/results
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-ENV PATH=$JAVA_HOME/bin:$PATH
 WORKDIR /app
 
 RUN apt-get update \
@@ -39,9 +37,10 @@ RUN apt-get update \
     fonts-unfonts-core \
     ca-certificates \
     curl \
-    openjdk-17-jre-headless \
+    unzip \
+  && mkdir -p /usr/lib/libreoffice/share/extensions/H2Orestart \
   && curl -fsSL $H2ORESTART_URL -o /tmp/H2Orestart.oxt \
-  && unopkg add --shared /tmp/H2Orestart.oxt \
+  && unzip -o /tmp/H2Orestart.oxt -d /usr/lib/libreoffice/share/extensions/H2Orestart \
   && rm -f /tmp/H2Orestart.oxt \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 hwp2pdf \
