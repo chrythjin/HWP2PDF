@@ -70,7 +70,7 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
         "--nologo",
         "--nofirststartwizard",
         "--norestore",
-        `--env:UserInstallation=${pathToFileURL(profileDirectory).href}`,
+        `-env:UserInstallation=file://${profileDirectory}`,
         "--infilter=Hwp2002_File",
         "--convert-to",
         "pdf:writer_pdf_Export",
