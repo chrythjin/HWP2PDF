@@ -31,6 +31,10 @@ export async function createApp() {
         }
         return ipKeyGenerator(request.ip ?? "unknown");
       },
+      skip: (request) => {
+        const path = request.path;
+        return path === "/health" || path.startsWith("/v1/jobs/");
+      },
       message: {
         error: {
           code: "rate_limit_exceeded",
