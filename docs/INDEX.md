@@ -43,3 +43,5 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260615_020400_test-infra-shared-validation.md` - added Vitest infrastructure, baseline tests, and shared validation refactor coverage.
 - `sessions/20260618_155921_deployment-guide.md` - added beginner-friendly end-to-end deployment guide (GCP + Cloud Run + Vercel) and surfaced it in the start-here list.
 - `sessions/20260619_000000_graphify-rebuild-semantic-extraction.md` - rebuilt knowledge graph: 38→204 nodes, 27→251 edges, 61 communities (76% extracted, 23% inferred). Re-extracted missing chunk_02 (22 files) and chunk_09 (window.svg), manually merged all 9 sem.json chunks, ran graphify cluster-only.
+- `sessions/20260619_231500_cloud-run-vercel-deploy.md` - completed GCP Cloud Run and Vercel production deployments, fixed Artifact Registry IAM issues, resolved Docker LibreOffice JRE extension errors, and resolved Vercel Routing/Redeploy configurations.
+
