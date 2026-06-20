@@ -84,6 +84,14 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
+      - name: Sync NEXT_PUBLIC_ADSENSE_CLIENT to Vercel
+        if: vars.NEXT_PUBLIC_ADSENSE_CLIENT != ''
+        run: |
+          echo "${{ vars.NEXT_PUBLIC_ADSENSE_CLIENT }}" | pnpm dlx vercel@latest env add NEXT_PUBLIC_ADSENSE_CLIENT production --token "${{ secrets.VERCEL_TOKEN }}" --yes || true
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
       - name: Deploy to Vercel (remote build)
         run: pnpm dlx vercel@latest deploy --prod --token "${{ secrets.VERCEL_TOKEN }}"
         env:
