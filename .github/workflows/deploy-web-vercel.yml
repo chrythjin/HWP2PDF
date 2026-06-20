@@ -70,7 +70,7 @@ jobs:
           cache: pnpm
 
       - name: Ensure pnpm is available globally
-        run: npm install -g pnpm@8.15.0
+        run: corepack enable && corepack prepare pnpm@8.15.0 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -92,7 +92,6 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
-          PATH: "/usr/local/bin:/usr/bin:/bin"
 
       - name: Deploy prebuilt web app
         run: pnpm dlx vercel@latest deploy --prebuilt --prod --token "${{ secrets.VERCEL_TOKEN }}"
