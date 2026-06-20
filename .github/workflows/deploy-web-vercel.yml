@@ -69,7 +69,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Ensure pnpm is available globally
+      - name: Ensure pnpm is available
         run: corepack enable && corepack prepare pnpm@8.15.0 --activate
 
       - name: Install dependencies
@@ -85,8 +85,8 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
-      - name: Build web app
-        run: pnpm dlx vercel@latest build --prod --token "${{ secrets.VERCEL_TOKEN }}"
+      - name: Deploy to Vercel (remote build)
+        run: pnpm dlx vercel@latest deploy --prod --token "${{ secrets.VERCEL_TOKEN }}"
         working-directory: apps/web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
