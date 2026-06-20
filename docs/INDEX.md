@@ -30,7 +30,7 @@ This folder is the project documentation entry point for future OpenCode session
 - LibreOffice is not installed in the current Windows development environment, so local surface QA verifies the clear converter configuration failure path rather than successful PDF output.
 - Docker image build and successful HWP-to-PDF conversion still need verification in Docker/GCP because Docker CLI is unavailable locally.
 - The Vercel frontend project at `https://hwp2pdf-phi.vercel.app` previously served `404 NOT_FOUND` and then a rate-limit error on `/v1/uploads/complete`; both were resolved by correcting Vercel project settings / `vercel.json` and by adding a Cloud Run-aware `keyGenerator` to `express-rate-limit`. See `sessions/20260619_235000_vercel-404-and-rate-limit-fix.md`.
-- Cloud Run HWP→PDF conversion was verified end-to-end (initiate, GCS upload, complete, job polling, PDF download) after fixing LibreOffice JRE, H2Orestart extension registration, rate-limit `ipKeyGenerator` validation, and LibreOffice `-env:UserInstallation` syntax. See `sessions/20260620_010000_hwp-conversion-cloud-run-fix.md`.
+- Cloud Run HWP→PDF conversion was verified end-to-end (initiate, GCS upload, complete, job polling, PDF download) after fixing LibreOffice JRE, H2Orestart extension registration, rate-limit `ipKeyGenerator` validation, and LibreOffice `-env:UserInstallation` syntax. Warm-up profile in `/app/.lo-profile` reduced conversion time from ~112s to ~92s. See `sessions/20260620_010000_hwp-conversion-cloud-run-fix.md`.
 
 ## Session notes
 
