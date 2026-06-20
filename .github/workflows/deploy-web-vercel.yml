@@ -80,14 +80,12 @@ jobs:
 
       - name: Pull Vercel environment
         run: pnpm dlx vercel@latest pull --yes --environment=production --token "${{ secrets.VERCEL_TOKEN }}"
-        working-directory: apps/web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Deploy to Vercel (remote build)
         run: pnpm dlx vercel@latest deploy --prod --token "${{ secrets.VERCEL_TOKEN }}"
-        working-directory: apps/web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
