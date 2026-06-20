@@ -32,20 +32,27 @@ tags: [adsense, vercel, nextjs, deployment, ci-cd]
 - `PageLayout.tsx`로 헤더, 푸터, 배경을 재사용 가능하게 추출
 - `/privacy`, `/terms`, `/contact` 페이지를 한국어로 작성
 - 푸터 링크를 실제 페이지로 연결
+- `/privacy`에 "쿠키 및 광고" 섹션을 추가하여 Google AdSense, Google CMP, 맞춤형 광고 거부 방법을 고지
 
-### 2. 메인 페이지 콘텐츠 보강
+### 2. Google CMP 동의 메시지
+
+- AdSense 대시보드에서 "Google의 CMP 2가지 선택사항(동의 및 옵션 관리)" 메시지를 선택
+- 별도 스크립트 추가 없이 AdSense 기본 스크립트만으로 Google CMP가 동작하도록 설정
+- 개인정보처리방침에 CMP 사용 사실을 명시
+
+### 4. 메인 페이지 콘텐츠 보강
 
 - "사용 방법" 단계 섹션 추가(3단계)
 - FAQ 아코디언 추가
 - CTA 버튼을 `#upload` 앵커 링크로 변경하여 서버 컴포넌트 prerender 오류 해결
 
-### 3. AdSense 연동
+### 5. AdSense 연동
 
 - `NEXT_PUBLIC_ADSENSE_CLIENT=ca-pub-5221391672019535` GitHub variable 등록
 - `layout.tsx`에 `<head>`에 직접 `adsbygoogle.js` 스크립트 삽입
 - 메인 페이지에 상단 배너, FAQ 인라인 두 개의 AdSense 단위 배치
 
-### 4. Vercel CI/CD 복구
+### 6. Vercel CI/CD 복구
 
 - 기존 workflow가 pnpm spawn 실패로 작동하지 않던 문제 해결
   - `corepack enable && corepack prepare pnpm@8.15.0 --activate`로 pnpm을 글로벌 설치
@@ -73,6 +80,7 @@ pnpm --filter web build
 | 27857276594 | `fb59e02` beforeInteractive strategy | success | 1m34s |
 | 27857372966 | `15903bd` inject script in head | success | 1m49s |
 | 27857459557 | `ab4f227` sync env to Vercel | success | 1m56s |
+| 27859696279 | `86fbd75` add AdSense/CMP cookie disclosure | success | 1m51s |
 
 ### 프로덕션 HTML 검증
 
@@ -92,6 +100,12 @@ $res = Invoke-WebRequest -Uri "https://hwp2pdf-phi.vercel.app" -UseBasicParsing
 - `https://hwp2pdf-phi.vercel.app/terms` - 200
 - `https://hwp2pdf-phi.vercel.app/contact` - 200
 
+`/privacy` 페이지 내용 검증:
+- "쿠키 및 광고" 섹션 존재
+- "Google AdSense" 언급됨
+- "동의 관리 플랫폼" 언급됨
+- "Google 광고 설정" 링크 존재
+
 ## 남은 작업
 
 - AdSense 대시보드에서 `hwp2pdf-phi.vercel.app` 사이트 추가 및 광고 단위 실제 승인 대기
@@ -102,3 +116,5 @@ $res = Invoke-WebRequest -Uri "https://hwp2pdf-phi.vercel.app" -UseBasicParsing
 
 - AdSense 스크립트는 Next.js App Router의 `<head>` 직접 삽입 방식으로 SSR HTML에 포함시킴
 - Vercel remote build에서는 GitHub Actions runner의 env var가 아닌 Vercel Dashboard/CLI env var만 인식하므로 `vercel env add` 동기화 필요
+- Google CMP(동의 메시지)는 AdSense 대시보드 설정과 AdSense 기본 스크립트만으로 활성화되며, 별도의 추가 코드 삽입은 필요 없음
+- CMP 사용 사실은 `/privacy` 페이지에 공개 고지함
