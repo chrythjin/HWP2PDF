@@ -1,44 +1,24 @@
 import DropzoneUploader from "@/components/DropzoneUploader";
+import PageLayout from "@/components/PageLayout";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "HWP2PDF - 한글 문서를 PDF로 무료 변환",
+  description:
+    "HWP(.hwp) 문서를 설치 없이 웹 브라우저에서 빠르고 안전하게 PDF로 변환하세요. 회원가입 불필요, 30분 후 자동 삭제.",
+};
 
 export default function Home() {
   return (
-    <div className="relative flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950 transition-colors duration-300 overflow-hidden">
-      
-      {/* Decorative blurred background shapes */}
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-blue-400/20 dark:bg-blue-600/10 blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[50%] rounded-full bg-emerald-400/20 dark:bg-emerald-600/10 blur-[150px] pointer-events-none" />
-      <div className="absolute top-[30%] right-[10%] w-[30%] h-[40%] rounded-full bg-indigo-400/10 dark:bg-indigo-600/5 blur-[100px] pointer-events-none" />
-
-      {/* Header */}
-      <header className="sticky top-0 z-50 w-full border-b border-zinc-200/50 dark:border-zinc-800/50 bg-white/40 dark:bg-zinc-950/40 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-500 to-indigo-600 text-white font-bold shadow-md shadow-blue-500/10">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <span className="font-extrabold text-xl tracking-tight bg-gradient-to-r from-zinc-900 to-zinc-700 dark:from-zinc-100 dark:to-zinc-300 bg-clip-text text-transparent">
-              HWP<span className="text-blue-500 font-normal">2</span>PDF
-            </span>
-          </div>
-          <div className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-            Free Online Converter
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col justify-center max-w-6xl w-full mx-auto px-6 py-12 md:py-20 relative z-10">
+    <PageLayout showBackground={true}>
+      <div className="max-w-6xl mx-auto px-6 py-12 md:py-20">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
-          
-          {/* Left Column: Hero Text */}
           <div className="lg:col-span-6 space-y-6 text-center lg:text-left">
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900/40 text-xs font-semibold text-blue-600 dark:text-blue-400">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
               <span>회원가입 없이 즉시 변환</span>
             </div>
-            
+
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-black tracking-tight text-zinc-900 dark:text-zinc-50 leading-[1.15]">
               HWP 문서를 <br />
               <span className="bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 bg-clip-text text-transparent">
@@ -46,7 +26,7 @@ export default function Home() {
               </span>
               로 변환하세요.
             </h1>
-            
+
             <p className="text-lg text-zinc-600 dark:text-zinc-400 font-medium max-w-lg mx-auto lg:mx-0">
               한글(hwp) 문서를 뷰어 설치 없이 쉽고 편리하게 변환하세요. 드래그 앤 드롭 단 3클릭 만에 최고의 레이아웃 품질로 즉시 처리됩니다.
             </p>
@@ -67,14 +47,11 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Right Column: Uploader */}
-          <div className="lg:col-span-6 flex justify-center">
+          <div id="upload" className="lg:col-span-6 flex justify-center scroll-mt-28">
             <DropzoneUploader />
           </div>
-
         </div>
 
-        {/* Feature section below */}
         <section className="mt-20 md:mt-32 border-t border-zinc-200/50 dark:border-zinc-800/50 pt-16">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="space-y-3">
@@ -115,21 +92,50 @@ export default function Home() {
             </div>
           </div>
         </section>
-      </main>
 
-      {/* Footer */}
-      <footer className="w-full border-t border-zinc-200/50 dark:border-zinc-800/50 py-8 mt-auto bg-white/20 dark:bg-zinc-950/20 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between text-xs text-zinc-500 dark:text-zinc-500 gap-4">
-          <div>
-            © {new Date().getFullYear()} HWP2PDF. All rights reserved.
+        <section className="mt-20 md:mt-32 border-t border-zinc-200/50 dark:border-zinc-800/50 pt-16">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-2xl md:text-3xl font-bold text-zinc-900 dark:text-zinc-50 mb-8 text-center">자주 묻는 질문</h2>
+            <div className="space-y-6">
+              <div className="bg-white/40 dark:bg-zinc-900/30 border border-zinc-200/50 dark:border-zinc-800/50 rounded-2xl p-6">
+                <h3 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-2">HWP2PDF는 무료인가요?</h3>
+                <p className="text-zinc-600 dark:text-zinc-400 text-sm">네, 별도 회원가입이나 결제 없이 HWP 문서를 PDF로 변환할 수 있습니다.</p>
+              </div>
+              <div className="bg-white/40 dark:bg-zinc-900/30 border border-zinc-200/50 dark:border-zinc-800/50 rounded-2xl p-6">
+                <h3 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-2">어떤 파일을 변환할 수 있나요?</h3>
+                <p className="text-zinc-600 dark:text-zinc-400 text-sm">확장자가 .hwp인 한글 문서를 지원합니다. 최대 파일 크기는 20MB이며, 한 번에 하나의 파일만 변환할 수 있습니다.</p>
+              </div>
+              <div className="bg-white/40 dark:bg-zinc-900/30 border border-zinc-200/50 dark:border-zinc-800/50 rounded-2xl p-6">
+                <h3 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-2">업로드한 파일은 안전한가요?</h3>
+                <p className="text-zinc-600 dark:text-zinc-400 text-sm">업로드된 파일과 변환 결과는 Google Cloud의 보안 저장소에 임시 보관되며, 변환 완료 후 30분이 지나면 영구 삭제됩니다.</p>
+              </div>
+              <div className="bg-white/40 dark:bg-zinc-900/30 border border-zinc-200/50 dark:border-zinc-800/50 rounded-2xl p-6">
+                <h3 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-2">변환된 PDF는 어디에서 다운로드하나요?</h3>
+                <p className="text-zinc-600 dark:text-zinc-400 text-sm">파일 업로드 후 변환이 완료되면 화면에 "PDF 다운로드" 버튼이 나타납니다. 링크는 보안을 위해 짧은 시간 동안만 유효합니다.</p>
+              </div>
+              <div className="bg-white/40 dark:bg-zinc-900/30 border border-zinc-200/50 dark:border-zinc-800/50 rounded-2xl p-6">
+                <h3 className="font-semibold text-zinc-900 dark:text-zinc-50 mb-2">변환에 시간이 얼마나 걸리나요?</h3>
+                <p className="text-zinc-600 dark:text-zinc-400 text-sm">파일 크기와 복잡도에 따라 다르지만, 일반적으로 1~2분 내에 완료됩니다. 첫 요청은 서버 초기화로 약간 더 소요될 수 있습니다.</p>
+              </div>
+            </div>
           </div>
-          <div className="flex space-x-6">
-            <a href="#" className="hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors">이용약관</a>
-            <a href="#" className="hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors">개인정보처리방침</a>
-            <a href="#" className="hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors">문의하기</a>
+        </section>
+
+        <section className="mt-20 md:mt-32 border-t border-zinc-200/50 dark:border-zinc-800/50 pt-16">
+          <div className="max-w-3xl mx-auto text-center">
+            <h2 className="text-2xl md:text-3xl font-bold text-zinc-900 dark:text-zinc-50 mb-4">지금 바로 변환해 보세요</h2>
+            <p className="text-zinc-600 dark:text-zinc-400 mb-8">
+              복잡한 설정 없이 HWP 파일을 드래그 앤 드롭하면 PDF가 준비됩니다.
+            </p>
+            <a
+              href="#upload"
+              className="inline-flex items-center justify-center px-8 py-4 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold shadow-lg hover:shadow-blue-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+            >
+              변환 시작하기
+            </a>
           </div>
-        </div>
-      </footer>
-    </div>
+        </section>
+      </div>
+    </PageLayout>
   );
 }
