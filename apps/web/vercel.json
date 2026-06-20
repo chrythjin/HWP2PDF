@@ -3,5 +3,5 @@
   "framework": "nextjs",
   "buildCommand": "cd ../.. && pnpm --filter @hwp2pdf/shared build && pnpm --filter web build",
   "outputDirectory": ".next",
-  "installCommand": "pnpm install --include=dev"
+  "installCommand": "pnpm install --include=dev --ignore-scripts"
 }
