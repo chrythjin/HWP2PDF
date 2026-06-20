@@ -1,3 +1,4 @@
+import AdSenseAd from "@/components/AdSenseAd";
 import DropzoneUploader from "@/components/DropzoneUploader";
 import PageLayout from "@/components/PageLayout";
 import type { Metadata } from "next";
@@ -51,6 +52,19 @@ export default function Home() {
             <DropzoneUploader />
           </div>
         </div>
+
+        <section className="mt-20 md:mt-32 border-t border-zinc-200/50 dark:border-zinc-800/50 pt-16">
+          <div className="max-w-3xl mx-auto text-center mb-8">
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">Sponsored</p>
+          </div>
+          <div className="flex justify-center">
+            <AdSenseAd
+              adSlot="hwp2pdf-top-banner"
+              adFormat="horizontal"
+              style={{ minHeight: 90, width: "100%", maxWidth: 728 }}
+            />
+          </div>
+        </section>
 
         <section className="mt-20 md:mt-32 border-t border-zinc-200/50 dark:border-zinc-800/50 pt-16">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -118,6 +132,19 @@ export default function Home() {
                 <p className="text-zinc-600 dark:text-zinc-400 text-sm">파일 크기와 복잡도에 따라 다르지만, 일반적으로 1~2분 내에 완료됩니다. 첫 요청은 서버 초기화로 약간 더 소요될 수 있습니다.</p>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="mt-20 md:mt-32 border-t border-zinc-200/50 dark:border-zinc-800/50 pt-16">
+          <div className="max-w-3xl mx-auto text-center mb-8">
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">Sponsored</p>
+          </div>
+          <div className="flex justify-center">
+            <AdSenseAd
+              adSlot="hwp2pdf-faq-inline"
+              adFormat="rectangle"
+              style={{ minHeight: 250, width: "100%", maxWidth: 300 }}
+            />
           </div>
         </section>
 
