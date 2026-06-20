@@ -50,7 +50,24 @@ export default function PrivacyPage() {
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">5. 사용자의 권리</h2>
           <p>사용자는 언제든지 자신의 파일을 삭제하거나 변환 작업을 중단할 수 있습니다. 문의사항은 <a href="/contact" className="text-blue-600 dark:text-blue-400 hover:underline">문의하기</a>를 통해 연락 주세요.</p>
 
-          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">6. 정책 변경</h2>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">6. 쿠키 및 광고</h2>
+          <p>
+            본 서비스는 Google AdSense를 통해 광고를 게재하고 있습니다.
+            Google은 방문자의 브라우저에 쿠키를 저장하여 맞춤형 광고를 제공할 수 있으며,
+            이 과정에서 IP 주소, 브라우저 정보, 방문한 페이지 등의 비개인 식별 정보가 활용될 수 있습니다.
+          </p>
+          <p>
+            유럽 경제 지역(EEA), 영국, 스위스 사용자를 포함한 모든 방문자에게는
+            Google의 동의 관리 플랫폼(CMP)을 통해 광고 및 쿠키 사용에 대한 동의를 요청합니다.
+            동의 메시지에서 "동의" 또는 "옵션 관리"를 선택하면 맞춤형 광고가 표시될 수 있습니다.
+          </p>
+          <p>
+            사용자는 언제든지 브라우저 설정에서 쿠키를 삭제하거나 차단할 수 있으며,
+            <a href="https://adssettings.google.com/authenticated" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">Google 광고 설정</a>에서
+            맞춤형 광고를 끌 수 있습니다.
+          </p>
+
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">7. 정책 변경</h2>
           <p>본 개인정보처리방침은 법령 및 서비스 변경에 따라 수정될 수 있으며, 변경 시 본 페이지를 통해 공지합니다.</p>
 
           <p className="text-sm text-zinc-500 dark:text-zinc-500 mt-12">최종 수정일: 2026년 6월 20일</p>
