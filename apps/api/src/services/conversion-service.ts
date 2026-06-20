@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { PROGRESS } from "@hwp2pdf/shared";
 import { config } from "../config.js";
 import { updateJob } from "./job-store.js";
 import { publishResultFile } from "./storage-service.js";
+
+const FIXED_LO_PROFILE_DIR = "/tmp/hwp2pdf/lo-profile";
 
 export interface ConversionInput {
   jobId: string;
@@ -60,51 +61,49 @@ export async function convertJobToPdf(input: ConversionInput) {
 }
 
 async function runLibreOffice(sourcePath: string, outputDirectory: string) {
-  const sourceBaseName = path.basename(sourcePath, path.extname(sourcePath));
-  const profileDirectory = path.join(outputDirectory, `${sourceBaseName}-lo-profile`);
+  const profileDirectory = FIXED_LO_PROFILE_DIR;
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const process = spawn(config.converterCommand, [
-        "--headless",
-        "--nologo",
-        "--nofirststartwizard",
-        "--norestore",
-        `-env:UserInstallation=file://${profileDirectory}`,
-        "--infilter=Hwp2002_File",
-        "--convert-to",
-        "pdf:writer_pdf_Export",
-        "--outdir",
-        outputDirectory,
-        sourcePath,
-      ]);
+  await new Promise<void>((resolve, reject) => {
+    const process = spawn(config.converterCommand, [
+      "--headless",
+      "--nologo",
+      "--nofirststartwizard",
+      "--norestore",
+      "--invisible",
+      `-env:UserInstallation=file://${profileDirectory}`,
+      "--infilter=Hwp2002_File",
+      "--convert-to",
+      "pdf:writer_pdf_Export",
+      "--outdir",
+      outputDirectory,
+      sourcePath,
+    ]);
 
-      let stderr = "";
-      let stdout = "";
+    let stderr = "";
+    let stdout = "";
 
-      process.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-
-      process.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8");
-      });
-
-      process.on("error", () => {
-        reject(new Error("LibreOffice 변환 엔진을 실행할 수 없습니다. LIBREOFFICE_BIN 또는 런타임 이미지를 확인하세요."));
-      });
-
-      process.on("close", (code) => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-
-        const details = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").slice(0, 2000);
-        reject(new Error(details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`));
-      });
+    process.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
     });
-  } finally {
-    await fs.rm(profileDirectory, { force: true, recursive: true });
-  }
+
+    process.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+
+    process.on("error", () => {
+      reject(new Error("LibreOffice 변환 엔진을 실행할 수 없습니다. LIBREOFFICE_BIN 또는 런타임 이미지를 확인하세요."));
+    });
+
+    process.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      const details = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").slice(0, 2000);
+      reject(new Error(details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`));
+    });
+  });
+
+  // profile 디렉토리는 warm-up 캐시를 재사용하기 위해 삭제하지 않음
 }

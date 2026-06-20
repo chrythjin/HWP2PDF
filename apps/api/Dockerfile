@@ -46,6 +46,9 @@ RUN apt-get update \
   && mkdir -p /usr/lib/libreoffice/share/extensions \
   && /usr/lib/libreoffice/program/unopkg add --shared /tmp/H2Orestart.oxt \
   && rm -f /tmp/H2Orestart.oxt \
+  && fc-cache -f -v \
+  && mkdir -p /tmp/hwp2pdf/lo-profile \
+  && /usr/lib/libreoffice/program/soffice --headless --nologo --nofirststartwizard --norestore --invisible -env:UserInstallation=file:///tmp/hwp2pdf/lo-profile --terminate_after_init || true \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 hwp2pdf \
   && useradd --system --uid 1001 --gid hwp2pdf --create-home hwp2pdf \
