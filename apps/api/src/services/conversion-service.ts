@@ -6,7 +6,7 @@ import { config } from "../config.js";
 import { updateJob } from "./job-store.js";
 import { publishResultFile } from "./storage-service.js";
 
-const FIXED_LO_PROFILE_DIR = "/tmp/hwp2pdf/lo-profile";
+const FIXED_LO_PROFILE_DIR = "/app/.lo-profile";
 
 export interface ConversionInput {
   jobId: string;

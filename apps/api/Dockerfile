@@ -47,13 +47,14 @@ RUN apt-get update \
   && /usr/lib/libreoffice/program/unopkg add --shared /tmp/H2Orestart.oxt \
   && rm -f /tmp/H2Orestart.oxt \
   && fc-cache -f -v \
-  && mkdir -p /tmp/hwp2pdf/lo-profile \
-  && /usr/lib/libreoffice/program/soffice --headless --nologo --nofirststartwizard --norestore --invisible -env:UserInstallation=file:///tmp/hwp2pdf/lo-profile --terminate_after_init || true \
+  && mkdir -p /app/.lo-profile \
+  && /usr/lib/libreoffice/program/soffice --headless --nologo --nofirststartwizard --norestore --invisible -env:UserInstallation=file:///app/.lo-profile --terminate_after_init || true \
+  && ls -la /app/.lo-profile || true \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 hwp2pdf \
   && useradd --system --uid 1001 --gid hwp2pdf --create-home hwp2pdf \
   && mkdir -p /tmp/hwp2pdf/uploads /tmp/hwp2pdf/results \
-  && chown -R hwp2pdf:hwp2pdf /tmp/hwp2pdf /app
+  && chown -R hwp2pdf:hwp2pdf /app /tmp/hwp2pdf
 
 COPY --from=build --chown=hwp2pdf:hwp2pdf /prod/api ./
 
