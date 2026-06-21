@@ -34,6 +34,10 @@ This folder is the project documentation entry point for future OpenCode session
 - AdSense integration added to the frontend: required legal pages (`/privacy`, `/terms`, `/contact`), main-page content enrichment, and the AdSense script injected into the HTML head. Vercel auto-deploy pipeline was restored by fixing pnpm availability and syncing `NEXT_PUBLIC_ADSENSE_CLIENT` to the Vercel project environment. See `sessions/20260620_110000_adsense-integration-and-vercel-ci-fix.md`.
 - `apps/web/public/ads.txt` was added to resolve the AdSense "Publisher content missing / ads.txt not found" warning for `hwp2pdf-phi.vercel.app`. A Vercel deploy is pending to make it live. See `sessions/20260621_034000_add-adsense-ads-txt.md`.
 
+## Roadmaps and plans
+
+- `plan/auth-history-delete-board-roadmap.md` - planned roadmap for adding Firebase Authentication, conversion history, file deletion, and a members-only board while keeping anonymous conversion.
+
 ## Session notes
 
 - `sessions/20260613_030400_api-backend-mvp.md` - created the Express/TypeScript API MVP with upload, job status, rate limiting, and LibreOffice command boundary.
