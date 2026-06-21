@@ -32,6 +32,7 @@ This folder is the project documentation entry point for future OpenCode session
 - The Vercel frontend project at `https://hwp2pdf-phi.vercel.app` previously served `404 NOT_FOUND` and then a rate-limit error on `/v1/uploads/complete`; both were resolved by correcting Vercel project settings / `vercel.json` and by adding a Cloud Run-aware `keyGenerator` to `express-rate-limit`. See `sessions/20260619_235000_vercel-404-and-rate-limit-fix.md`.
 - Cloud Run HWP→PDF conversion was verified end-to-end (initiate, GCS upload, complete, job polling, PDF download) after fixing LibreOffice JRE, H2Orestart extension registration, rate-limit `ipKeyGenerator` validation, and LibreOffice `-env:UserInstallation` syntax. Warm-up profile in `/app/.lo-profile` reduced conversion time from ~112s to ~92s. See `sessions/20260620_010000_hwp-conversion-cloud-run-fix.md`.
 - AdSense integration added to the frontend: required legal pages (`/privacy`, `/terms`, `/contact`), main-page content enrichment, and the AdSense script injected into the HTML head. Vercel auto-deploy pipeline was restored by fixing pnpm availability and syncing `NEXT_PUBLIC_ADSENSE_CLIENT` to the Vercel project environment. See `sessions/20260620_110000_adsense-integration-and-vercel-ci-fix.md`.
+- `apps/web/public/ads.txt` was added to resolve the AdSense "Publisher content missing / ads.txt not found" warning for `hwp2pdf-phi.vercel.app`. A Vercel deploy is pending to make it live. See `sessions/20260621_034000_add-adsense-ads-txt.md`.
 
 ## Session notes
 
@@ -49,6 +50,5 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260619_231500_cloud-run-vercel-deploy.md` - completed GCP Cloud Run and Vercel production deployments, fixed Artifact Registry IAM issues, resolved Docker LibreOffice JRE extension errors, and resolved Vercel Routing/Redeploy configurations.
 - `sessions/20260619_232000_vercel-404-diagnosis.md` - diagnosed live `404 NOT_FOUND` on `https://hwp2pdf-phi.vercel.app`; verified Cloud Run API is healthy and identified missing/correct Vercel project settings and GitHub Actions secrets as the root cause.
 - `sessions/20260620_110000_adsense-integration-and-vercel-ci-fix.md` - added AdSense integration, required legal pages, main-page content enrichment, and restored the GitHub Actions → Vercel auto-deploy pipeline.
-- `sessions/20260620_010000_hwp-conversion-cloud-run-fix.md` - fixed LibreOffice JRE, H2Orestart registration, rate-limit keyGenerator validation, and LibreOffice UserInstallation syntax; verified HWP→PDF conversion end-to-end on Cloud Run.
-- `sessions/20260619_235000_vercel-404-and-rate-limit-fix.md` - fixed Vercel 404 by adding `apps/web/vercel.json`, aligning branch and dashboard settings, and fixed Cloud Run `500` on `/v1/uploads/complete` by adding a Cloud Run-aware `keyGenerator` to `express-rate-limit`.
+- `sessions/20260621_034000_add-adsense-ads-txt.md` - added `apps/web/public/ads.txt` to satisfy the Google AdSense authorized digital sellers requirement and verified it serves locally.
 
