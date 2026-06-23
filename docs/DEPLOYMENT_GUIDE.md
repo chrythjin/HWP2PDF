@@ -85,7 +85,7 @@ GitHub: https://github.com/[내-계정]/HWP2PDF
 
 ## 1-2. 필요한 API 활성화하기
 
-왼쪽 메뉴 → **API 및 서비스** → **라이브러리** → 아래 5개를 각각 검색해서 **사용 설정** 클릭:
+왼쪽 메뉴 → **API 및 서비스** → **라이브러리** → 아래를 각각 검색해서 **사용 설정** 클릭:
 
 | # | API 이름 | 용도 |
 |---|---|---|
@@ -94,6 +94,9 @@ GitHub: https://github.com/[내-계정]/HWP2PDF
 | 3 | Artifact Registry API | 이미지 저장 |
 | 4 | Cloud Storage API | 파일 저장소 |
 | 5 | Cloud Firestore API | 작업 상태 저장 |
+| 6 | Cloud Tasks API | 비동기 변환 큐 |
+| 7 | Firebase Authentication | 회원 인증 (이메일/비밀번호) |
+| 8 | Identity and Access Management (IAM) | 서비스 계정 권한 관리 |
 
 > **💡 팁**: 검색창에 한글이 안 먹으면 영어로 검색 (예: "Cloud Run")
 
@@ -111,10 +114,21 @@ GitHub: https://github.com/[내-계정]/HWP2PDF
    - `Storage Object Admin` — 파일 생성/읽기/삭제
    - `Cloud Datastore User` — Firestore 읽기/쓰기
    - `Service Account Token Creator` — GCS 서명 URL 생성용
+   - `Cloud Tasks Enqueuer` — Cloud Tasks 큐에 변환 작업 추가
 
 3. **완료** 클릭
 
 > **⚠️ 이 권한이 없으면 파일 업로드/변환/다운로드가 전부 실패합니다**
+
+## 1-3-1. Cloud Tasks 서비스 계정 (워커 호출용)
+
+Cloud Tasks가 API의 내부 워커 엔드포인트를 호출할 때 사용할 서비스 계정이 필요합니다. 1-3에서 만든 `cloud-run-api` 계정을 재사용하거나 별도 계정을 만들 수 있습니다.
+
+별도 계정을 만드는 경우:
+1. 서비스 계정 이름: `cloud-tasks-worker`
+2. 권한: **Cloud Run Invoker** — API 서비스 호출용
+
+배포 후 Cloud Run 서비스에 이 계정의 Invoker 권한을 부여해야 합니다 (GitHub Actions 워크플로우가 자동으로 처리).
 
 ## 1-4. GCS 버킷 만들기 (파일 창고)
 
@@ -160,6 +174,41 @@ GitHub: https://github.com/[내-계정]/HWP2PDF
 4. 보안 규칙: **프로덕션 모드** (처음엔 잠금, 나중에 API 키 방식으로 풀 예정이지만 일단 기본)
 5. **만들기** 클릭
 
+## 1-6. Firebase Authentication 활성화
+
+> **왜 필요한가요?** 회원가입/로그인/변환 이력/게시판 기능을 사용하려면 Firebase Authentication이 필요합니다. 비회원 변환은 Firebase 없이도 그대로 작동합니다.
+
+1. https://console.firebase.google.com 접속 → **프로젝트 추가** → 1-1에서 만든 GCP 프로젝트 선택
+2. Firebase 콘솔 → **Authentication** → **Sign-in method**
+3. **Email/Password** 클릭 → **사용 설정** → **저장**
+4. Firebase 콘솔 → **프로젝트 설정** (톱니바퀴 아이콘) → **일반** 탭
+5. 아래 값들을 복사해두세요 (Step 3에서 Vercel에 등록):
+   - `apiKey` → `NEXT_PUBLIC_FIREBASE_API_KEY`
+   - `authDomain` → `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` (보통 `프로젝트ID.firebaseapp.com`)
+   - `projectId` → `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+   - `storageBucket` → `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+   - `messagingSenderId` → `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+   - `appId` → `NEXT_PUBLIC_FIREBASE_APP_ID`
+
+> **💡 Firebase 프로젝트와 GCP 프로젝트가 같으면** Firebase Admin SDK가 Cloud Run ADC로 자동 초기화됩니다. 별도 서비스 계정 키 파일이 필요하지 않습니다.
+
+## 1-7. Cloud Tasks 큐 만들기
+
+> **왜 필요한가요?** 변환 작업을 Cloud Tasks 큐에 넣으면 브라우저를 닫아도 변환이 완료됩니다. 페이지 이탈에 안전한 비동기 변환을 보장합니다.
+
+Cloud Shell 또는 로컬 gcloud CLI에서:
+
+```bash
+gcloud tasks queues create conversion-queue \
+  --location=asia-northeast3 \
+  --max-concurrent-dispatches=10 \
+  --max-attempts=10 \
+  --max-backoff=300s \
+  --max-dispatches-per-second=5
+```
+
+> **💡 큐 이름과 리전은** GitHub Variables의 `CLOUD_TASKS_QUEUE_NAME`과 `CLOUD_TASKS_LOCATION` 값과 일치해야 합니다. 워크플로우 기본값은 `conversion-queue` / `asia-northeast3`입니다.
+
 ---
 
 # 🐳 Step 2: Cloud Run API 배포
@@ -200,8 +249,10 @@ GitHub 저장소 페이지 → **Settings** → **Secrets and variables** → **
 |---|---|---|
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | 2-1의 공급업체 ID | 1단계에서 복사한 풀 ID + `/providers/github-actions` |
 | `GCP_SERVICE_ACCOUNT_EMAIL` | `cloud-run-api@프로젝트ID.iam.gserviceaccount.com` | IAM에서 확인 |
+| `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL` | Cloud Tasks 워커 호출용 서비스 계정 이메일 | 1-3-1에서 만든 계정 (같은 계정 재사용 가능) |
+| `CLOUD_RUN_WORKER_AUDIENCE` | (선택) 워커 엔드포인트 OIDC audience | Cloud Run 서비스 URL. 비워두면 워커 URL이 자동 사용됨 |
 
-### Variables (공개 값, 4개)
+### Variables (공개 값)
 
 | 이름 | 값 예시 |
 |---|---|
@@ -211,6 +262,10 @@ GitHub 저장소 페이지 → **Settings** → **Secrets and variables** → **
 | `CLOUD_RUN_API_SERVICE_ACCOUNT` | `cloud-run-api@프로젝트ID.iam.gserviceaccount.com` |
 | `GCS_BUCKET_NAME` | 1-4에서 만든 버킷 이름 |
 | `WEB_ORIGIN` | 일단 `https://example.com` (Step 3 후 Vercel URL로 교체) |
+| `CLOUD_TASKS_QUEUE_NAME` | `conversion-queue` (1-7에서 만든 큐) |
+| `CLOUD_TASKS_LOCATION` | `asia-northeast3` |
+| `FIRESTORE_JOBS_COLLECTION` | `jobs` (기본값) |
+| `FIRESTORE_BOARD_POSTS_COLLECTION` | `boardPosts` (기본값) |
 
 ## 2-3. 첫 배포 실행
 
@@ -285,10 +340,18 @@ Invoke-RestMethod "$url/health"
 **Environment Variables** 섹션에서:
 - `NEXT_PUBLIC_API_BASE_URL` = **Step 2-4에서 복사한 Cloud Run URL**
   - 예: `https://hwp2pdf-api-xxxxx-an.a.run.app`
+- `NEXT_PUBLIC_FIREBASE_API_KEY` = 1-6에서 복사한 Firebase apiKey
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` = 1-6에서 복사한 Firebase authDomain
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID` = 1-6에서 복사한 Firebase projectId
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` = 1-6에서 복사한 Firebase storageBucket
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` = 1-6에서 복사한 Firebase messagingSenderId
+- `NEXT_PUBLIC_FIREBASE_APP_ID` = 1-6에서 복사한 Firebase appId
 
 > **⚠️ 슬래시(/) 없이 URL만 입력!**
 > - ❌ `https://hwp2pdf-api-xxx.run.app/`
 > - ✅ `https://hwp2pdf-api-xxx.run.app`
+
+> **💡 Firebase 환경변수는** 회원 기능(로그인/이력/게시판)이 필요할 때만 필수입니다. 비회원 변환만 사용한다면 `NEXT_PUBLIC_API_BASE_URL`만 있어도 됩니다.
 
 **Deploy** 클릭
 
@@ -332,11 +395,19 @@ GitHub 저장소 → **Settings** → **Secrets and variables** → **Actions**:
 | `VERCEL_ORG_ID` | 3-5의 Team ID |
 | `VERCEL_PROJECT_ID` | 3-5의 Project ID |
 
-### Variable (1개 — 이미 있을 수 있음)
+### Variable (공개 값 — Firebase 클라이언트 설정 포함)
 
 | 이름 | 값 |
 |---|---|
 | `NEXT_PUBLIC_API_BASE_URL` | Cloud Run URL (3-2에서 등록한 값과 동일) |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | Firebase apiKey (1-6에서 복사) |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase authDomain |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Firebase projectId |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | Firebase storageBucket |
+| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | Firebase messagingSenderId |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | Firebase appId |
+
+> **💡 GitHub Variables에 등록하면** Vercel 배포 워크플로우가 자동으로 Vercel 프로젝트에 동기화합니다. Vercel 대시보드에서 직접 등록해도 됩니다.
 
 ## 3-7. 자동 배포 활성화
 

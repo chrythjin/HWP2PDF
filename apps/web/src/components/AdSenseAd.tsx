@@ -1,5 +1,11 @@
 "use client";
 
+declare global {
+  interface Window {
+    adsbygoogle?: Array<Record<string, unknown>>;
+  }
+}
+
 import { useEffect, useRef } from "react";
 
 type AdFormat = "auto" | "rectangle" | "vertical" | "horizontal";
@@ -23,7 +29,7 @@ export default function AdSenseAd({
   useEffect(() => {
     if (pushedRef.current || !ref.current) return;
 
-    const win = window as any;
+    const win = window;
     win.adsbygoogle = win.adsbygoogle || [];
 
     try {

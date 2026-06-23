@@ -46,6 +46,20 @@ H2Orestart is GPL-3.0. Before public production launch, confirm the project's Sa
 | `FIRESTORE_DATABASE_ID` | `(default)` | Firestore database ID. |
 | `FIRESTORE_JOBS_COLLECTION` | `jobs` | Collection used for job status documents. |
 | `CORS_ORIGIN` | `http://localhost:3000` | Allowed frontend origin. Set this to the deployed web origin. |
+| `FIREBASE_PROJECT_ID` | ADC default | Firebase/GCP project ID for Firebase Admin SDK initialization. In Cloud Run, ADC infers this automatically; set explicitly if different from the GCS/Firestore project. |
+| `FIREBASE_ADMIN_MODE` | `adc` | Firebase Admin initialization mode: `adc` (Cloud Run production default), `service-account` (local fallback via `FIREBASE_PRIVATE_KEY_PATH`), `mock` (test mode, no real Firebase calls). |
+| `FIREBASE_PRIVATE_KEY_PATH` | none | Path to service account JSON key file. Used only when `FIREBASE_ADMIN_MODE=service-account`. Local/non-GCP fallback only — never use in production. |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | none | Inline service account JSON key (raw JSON or base64-encoded). Fallback when `FIREBASE_PRIVATE_KEY_PATH` is not available (e.g. Cloud Run secret passed as env var). Local/non-GCP fallback only — ADC is preferred in production. |
+| `FIREBASE_AUTH_EMULATOR_HOST` | none | Firebase Auth Emulator host for local development/testing (e.g. `localhost:9099`). |
+| `CONVERSION_DISPATCHER` | auto | Conversion dispatch mode: `cloud-tasks` (production) or `inline` (local/dev fallback). Auto-resolves to `cloud-tasks` when all Cloud Tasks env vars are present, else `inline`. |
+| `CLOUD_TASKS_QUEUE_NAME` | none | Cloud Tasks queue name (e.g. `conversion-queue`). Create with `gcloud tasks queues create conversion-queue --location=$REGION`. |
+| `CLOUD_TASKS_LOCATION` | none | Cloud Tasks queue location (e.g. `asia-northeast3`). Should match the API region. |
+| `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL` | none | Service account email used by Cloud Tasks to generate OIDC tokens for the worker endpoint. Must have Cloud Run Invoker role on the API service. |
+| `INTERNAL_WORKER_URL` | auto | Full URL of the internal worker endpoint (`/internal/workers/convert`). If not set, constructed from the service's public URL or `INTERNAL_API_URL`. |
+| `INTERNAL_WORKER_AUDIENCE` | auto | Expected OIDC audience for the worker endpoint. Cloud Tasks generates a token with this audience; the worker verifies it matches. Defaults to the worker URL itself. |
+| `INTERNAL_WORKER_ISSUER` | `https://accounts.google.com` | Expected OIDC issuer for worker token verification. |
+| `STUCK_JOB_THRESHOLD_MINUTES` | `10` | Stuck-job recovery threshold. Jobs stuck in `queued` or `processing` longer than this may be re-enqueued by a cleanup task. |
+| `FIRESTORE_BOARD_POSTS_COLLECTION` | `boardPosts` | Firestore collection for board posts. |
 
 ## Storage and job modes
 
@@ -75,6 +89,8 @@ bash infrastructure/gcp/apply-gcs-cors.sh
 
 The lifecycle rule in `infrastructure/gcp/gcs-lifecycle.json` deletes objects under `staging/` and `output/` after one day. This is the closest bucket-native setting to the 30-minute product goal; use a scheduled cleanup job if exact 30-minute deletion is required.
 
+For member files, the application attempts immediate deletion when a user requests deletion. The GCS lifecycle policy serves as a safety net for orphaned objects. Member metadata (without file content) is retained in Firestore for 30 days as tombstones before hard deletion.
+
 The CORS rule in `infrastructure/gcp/gcs-cors.json` must use the real Vercel web origin before applying. It allows browser `PUT` uploads to signed GCS URLs.
 
 ## Local container QA
@@ -102,12 +118,60 @@ Upload and conversion should be tested through the web uploader. In GCS mode the
 
 ## Cloud Run deployment
 
-The checked-in `.github/workflows/deploy-api-cloud-run.yml` builds the API image, pushes it to Artifact Registry, deploys it to Cloud Run, and runs `scripts/smoke-api.mjs` against the deployed service. Configure these GitHub repository variables/secrets before enabling it:
+The checked-in `.github/workflows/deploy-api-cloud-run.yml` builds the API image, pushes it to Artifact Registry, deploys it to Cloud Run, grants Cloud Tasks Enqueuer and Cloud Run Invoker IAM roles, and runs `scripts/smoke-api.mjs` against the deployed service. Configure these GitHub repository variables/secrets before enabling it:
 
-- vars: `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_RUN_API_SERVICE`, `WEB_ORIGIN`, `GCS_BUCKET_NAME`, `CLOUD_RUN_API_SERVICE_ACCOUNT`
-- secrets: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT_EMAIL`
+- vars: `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_RUN_API_SERVICE`, `WEB_ORIGIN`, `GCS_BUCKET_NAME`, `CLOUD_RUN_API_SERVICE_ACCOUNT`, `CLOUD_TASKS_QUEUE_NAME`, `CLOUD_TASKS_LOCATION`, `FIRESTORE_JOBS_COLLECTION`, `FIRESTORE_BOARD_POSTS_COLLECTION`
+- secrets: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT_EMAIL`, `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`, `CLOUD_RUN_WORKER_AUDIENCE` (optional, defaults to worker URL)
 
-If any required deployment variable or secret is missing, the workflow preflight job succeeds and skips the deploy job instead of failing the push. Once all values are configured, the workflow deploys with `STORAGE_BACKEND=gcs` and `JOB_STORE_BACKEND=firestore`, then smoke-tests `/health`, invalid multipart upload handling, and direct-upload URL initiation.
+If any required deployment variable or secret is missing, the workflow preflight job succeeds and skips the deploy job instead of failing the push. Once all values are configured, the workflow deploys with `STORAGE_BACKEND=gcs`, `JOB_STORE_BACKEND=firestore`, `CONVERSION_DISPATCHER=cloud-tasks`, and `FIREBASE_ADMIN_MODE=adc`, then smoke-tests `/health`, anonymous upload initiate, token-required status, worker OIDC rejection, member endpoint rejection, and board write rejection.
+
+## Firebase Admin authentication
+
+The API uses Firebase Admin SDK to verify Firebase ID tokens from the client. In Cloud Run production, ADC (Application Default Credentials) is the default and preferred mode — no service account key file is needed. The runtime service account must have Firebase Admin permissions (typically available by default in the Firebase project).
+
+### Required IAM roles for the Cloud Run service account
+
+| Role | Purpose |
+|---|---|
+| `roles/cloudtasks.enqueuer` | Create HTTP tasks on the Cloud Tasks queue |
+| `roles/run.invoker` | (Granted to the Cloud Tasks service account, not the API SA) Allow Cloud Tasks to invoke the worker endpoint |
+| `roles/storage.objectAdmin` | GCS original/result object create/read/delete |
+| `roles/datastore.user` | Firestore job and board post read/write |
+| `roles/iam.serviceAccountTokenCreator` | GCS V4 signed URL generation |
+
+### Cloud Tasks queue setup
+
+Before deploying with `CONVERSION_DISPATCHER=cloud-tasks`, create the queue:
+
+```bash
+gcloud tasks queues create conversion-queue \
+  --location=asia-northeast3 \
+  --max-concurrent-dispatches=10 \
+  --max-attempts=10 \
+  --max-backoff=300s \
+  --max-dispatches-per-second=5
+```
+
+The Cloud Tasks service account (`CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`) must have `roles/run.invoker` on the Cloud Run API service so it can call the internal worker endpoint with an OIDC token.
+
+### Worker endpoint security
+
+The internal worker endpoint (`POST /internal/workers/convert`) is protected by OIDC token verification. Cloud Tasks generates an OIDC token with the configured audience (`INTERNAL_WORKER_AUDIENCE` or the worker URL). The API verifies the token's audience, issuer, and service account email before processing. Requests without a valid OIDC token are rejected with 401/403.
+
+The Cloud Run service is deployed with `--allow-unauthenticated` so that public API endpoints (health, upload, jobs) are accessible, but the worker endpoint is protected at the application layer by OIDC verification.
+
+## Firestore TTL and cleanup
+
+Member job metadata is retained for 30 days (`DEFAULT_METADATA_RETENTION_MS`). Deleted member jobs are tombstoned for 30 days (`TOMBSTONE_RETENTION_MS`) before hard deletion. Anonymous job metadata follows `JOB_RETENTION_MINUTES` (default 30 minutes).
+
+Firestore does not have native TTL policies for individual documents in the default mode. Cleanup of expired/tombstoned documents should be handled by:
+
+1. A scheduled Cloud Function or Cloud Run job that queries for documents past their retention period and deletes them.
+2. Application-level lazy cleanup: when a user queries their history, expired/tombstoned entries are filtered out and optionally batch-deleted.
+
+GCS object cleanup is handled by the bucket lifecycle policy (see below).
+
+## GCS lifecycle and CORS
 
 ## Current limitation
 

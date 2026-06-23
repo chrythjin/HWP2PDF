@@ -3,35 +3,116 @@ import path from "node:path";
 import { Router } from "express";
 import {
   API_ROUTES,
+  ANONYMOUS_ACCESS_TOKEN_HEADER,
   PROGRESS,
+  UPLOAD_SESSION_TTL_MS,
+  type AnonymousAccessTokenResponse,
   type DirectUploadCompleteRequest,
   type DirectUploadInitRequest,
   type DirectUploadInitResponse,
   type JobStatusResponse,
   type UploadResponse,
+  type UploadStatus,
   validateFile,
 } from "@hwp2pdf/shared";
 import { handleUploadMiddleware } from "../middleware/upload.js";
+import { optionalAuth, requireAuth } from "../middleware/auth.js";
 import { ApiError } from "../utils/api-error.js";
 import { config } from "../config.js";
-import { createJob, getJob } from "../services/job-store.js";
+import { boardRouter } from "./v1.board.js";
+import {
+  completeUploadSession,
+  createJob,
+  createUploadSession,
+  getJob,
+  getJobForUser,
+  getUploadSession,
+  listJobsByUser,
+  markJobDeleted,
+  updateJob,
+  type JobRecord,
+} from "../services/job-store.js";
 import { convertJobToPdf } from "../services/conversion-service.js";
 import {
   createOriginalUploadUrl,
+  createOwnerVerifier,
+  deleteStoredJobFiles,
   directUploadUrlTtlMs,
   downloadOriginalFile,
+  extractAnonymousTokenFromHeaders,
+  getProtectedDownloadUrl,
+  getStatusResponse,
   persistOriginalFile,
   removeLocalResultFile,
   shouldUseGcs,
+  type OwnerCredentials,
 } from "../services/storage-service.js";
+import { generateAnonymousAccessTokenWithHash } from "../utils/access-token.js";
+import { enqueueConversionJob } from "../services/cloud-tasks-dispatcher.js";
+import { requireWorkerOidc } from "../middleware/worker-auth.js";
 
 export const router = Router();
+
+// ---------------------------------------------------------------------------
+// Owner extraction helper.
+//
+// Todo 3 will add `ownerType`, `userId`, and `accessTokenHash` fields to
+// JobRecord. Until then, jobs created by the current code have no owner
+// fields and are treated as "legacy" jobs: status returns no downloadUrl
+// (the download endpoint still works via the proxy route). Once Todo 3
+// lands, this helper will pick up the new fields automatically.
+// ---------------------------------------------------------------------------
+
+interface JobOwnerFields {
+  ownerType?: "user" | "anonymous";
+  userId?: string;
+  accessTokenHash?: string;
+}
+
+function getJobOwnerFields(job: JobRecord): JobOwnerFields {
+  const record = job as JobRecord & JobOwnerFields;
+  return {
+    ownerType: record.ownerType,
+    userId: record.userId,
+    accessTokenHash: record.accessTokenHash,
+  };
+}
+
+function buildOwnerVerifier(job: JobRecord) {
+  const owner = getJobOwnerFields(job);
+  if (!owner.ownerType) return undefined;
+  return createOwnerVerifier({
+    job,
+    ownerType: owner.ownerType,
+    userId: owner.userId,
+    accessTokenHash: owner.accessTokenHash,
+  });
+}
+
+function buildOwnerCredentials(request: {
+  user?: { uid: string };
+  headers: Record<string, string | string[] | undefined>;
+}): OwnerCredentials {
+  return {
+    anonymousToken: extractAnonymousTokenFromHeaders(request.headers),
+    user: request.user as OwnerCredentials["user"],
+  };
+}
+
+/**
+ * Extract a route param as a string. Express 5 types params as
+ * `string | string[]`; in practice single-param routes always produce a string.
+ */
+function getParam(request: { params: Record<string, string | string[]> }, name: string): string {
+  const value = request.params[name];
+  return Array.isArray(value) ? value[0] : value;
+}
 
 router.get(API_ROUTES.HEALTH, (_request, response) => {
   response.json({ status: "ok" });
 });
 
-router.post(API_ROUTES.UPLOADS_INITIATE, async (request, response, next) => {
+router.post(API_ROUTES.UPLOADS_INITIATE, optionalAuth, async (request, response, next) => {
   try {
     const body = request.body as Partial<DirectUploadInitRequest>;
     if (!body.fileName || typeof body.fileSize !== "number") {
@@ -61,7 +142,37 @@ router.post(API_ROUTES.UPLOADS_INITIATE, async (request, response, next) => {
       return;
     }
 
-    const responseBody: DirectUploadInitResponse = {
+    // --- Owner binding (decision D6/D13) ---
+    // Authenticated users get ownerType: "user" with their userId.
+    // Anonymous users get ownerType: "anonymous" with a hashed access token;
+    // the plaintext token is returned exactly once in the response.
+    let accessTokenHash: string | undefined;
+    let plaintextToken: string | undefined;
+    let ownerType: "user" | "anonymous";
+    let userId: string | undefined;
+
+    if (request.user) {
+      ownerType = "user";
+      userId = request.user.uid;
+    } else {
+      ownerType = "anonymous";
+      const { token, hash } = generateAnonymousAccessTokenWithHash();
+      plaintextToken = token;
+      accessTokenHash = hash;
+    }
+
+    await createUploadSession({
+      jobId,
+      objectPath: upload.objectPath,
+      fileName: body.fileName,
+      fileSize: body.fileSize,
+      ownerType,
+      userId,
+      accessTokenHash,
+      expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
+    });
+
+    const responseBody: DirectUploadInitResponse & { accessToken?: string; accessTokenHeader?: string } = {
       uploadMode: "direct",
       jobId,
       uploadUrl: upload.uploadUrl,
@@ -70,13 +181,19 @@ router.post(API_ROUTES.UPLOADS_INITIATE, async (request, response, next) => {
       headers: upload.headers,
     };
 
+    // Return the plaintext anonymous access token exactly once.
+    if (plaintextToken !== undefined) {
+      responseBody.accessToken = plaintextToken;
+      responseBody.accessTokenHeader = ANONYMOUS_ACCESS_TOKEN_HEADER;
+    }
+
     response.status(201).json(responseBody);
   } catch (error) {
     next(error);
   }
 });
 
-router.post(API_ROUTES.UPLOADS_COMPLETE, async (request, response, next) => {
+router.post(API_ROUTES.UPLOADS_COMPLETE, optionalAuth, async (request, response, next) => {
   try {
     const body = request.body as Partial<DirectUploadCompleteRequest>;
     if (!body.jobId || !body.objectPath || !body.fileName || typeof body.fileSize !== "number") {
@@ -90,10 +207,56 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, async (request, response, next) => {
       return;
     }
 
-    const expectedPrefix = `${config.gcsOriginalPrefix}/${body.jobId}/`;
-    if (!body.objectPath.startsWith(expectedPrefix)) {
-      next(new ApiError(422, "invalid_upload_object", "업로드된 원본 파일 경로가 작업 ID와 일치하지 않습니다."));
+    // --- UploadSession ownership verification (decision D6) ---
+    // Look up the server-side UploadSession created at initiate time.
+    // Do NOT trust the client-provided objectPath merely by prefix —
+    // verify it matches the session's stored objectPath exactly.
+    const session = await getUploadSession(body.jobId);
+    if (!session) {
+      next(new ApiError(404, "upload_session_not_found", "업로드 세션을 찾을 수 없습니다. 업로드를 먼저 시작하세요."));
       return;
+    }
+
+    if (session.completedAt) {
+      next(new ApiError(409, "upload_session_already_completed", "이미 완료된 업로드 세션입니다."));
+      return;
+    }
+
+    // Verify objectPath matches the session exactly (not just by prefix).
+    if (session.objectPath !== body.objectPath) {
+      next(new ApiError(403, "upload_session_object_mismatch", "업로드된 파일 경로가 세션과 일치하지 않습니다."));
+      return;
+    }
+
+    // Verify fileName/fileSize match the session.
+    if (session.fileName !== body.fileName || session.fileSize !== body.fileSize) {
+      next(new ApiError(403, "upload_session_file_mismatch", "업로드된 파일 정보가 세션과 일치하지 않습니다."));
+      return;
+    }
+
+    // Owner verification: check that the caller matches the session's owner.
+    if (session.ownerType === "user") {
+      if (!request.user || request.user.uid !== session.userId) {
+        next(new ApiError(403, "upload_session_owner_mismatch", "업로드 세션 소유자가 일치하지 않습니다."));
+        return;
+      }
+    } else if (session.ownerType === "anonymous") {
+      const clientToken = extractAnonymousTokenFromHeaders(request.headers);
+      if (!clientToken) {
+        next(new ApiError(401, "unauthorized", "익명 업로드 세션 완료에는 access token이 필요합니다."));
+        return;
+      }
+      // Constant-time verification via the owner verifier.
+      const verifier = createOwnerVerifier({
+        job: {} as JobRecord,
+        ownerType: "anonymous",
+        accessTokenHash: session.accessTokenHash,
+      });
+      const result = verifier({ anonymousToken: clientToken });
+      if (!result.authorized) {
+        next(new ApiError(403, "upload_session_token_mismatch", "업로드 세션 access token이 일치하지 않습니다."));
+        return;
+      }
     }
 
     await fs.mkdir(config.uploadDirectory, { recursive: true });
@@ -111,9 +274,20 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, async (request, response, next) => {
       status: "queued",
       progress: PROGRESS.QUEUED,
       message: "변환 작업이 대기열에 등록되었습니다.",
+      // Owner fields from the verified session.
+      ownerType: session.ownerType,
+      userId: session.userId,
+      accessTokenHash: session.accessTokenHash,
     });
 
-    void convertJobToPdf({ jobId: job.jobId, sourcePath: job.sourcePath });
+    // Mark the upload session as completed.
+    await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
+
+    // Enqueue conversion via Cloud Tasks (or inline/mock in dev/test).
+    // The old `void convertJobToPdf(...)` fire-and-forget is replaced by
+    // a durable queue dispatch. See cloud-tasks-dispatcher.ts for mode
+    // resolution (cloud-tasks / inline / mock).
+    void enqueueConversionJob(job.jobId);
 
     const responseBody: UploadResponse = {
       jobId: job.jobId,
@@ -128,7 +302,7 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, async (request, response, next) => {
   }
 });
 
-router.post(API_ROUTES.UPLOAD, handleUploadMiddleware, async (request, response, next) => {
+router.post(API_ROUTES.UPLOAD, optionalAuth, handleUploadMiddleware, async (request, response, next) => {
   const file = request.file;
   if (!file) {
     next(new ApiError(422, "file_required", "업로드할 HWP 파일을 선택하세요."));
@@ -146,6 +320,22 @@ router.post(API_ROUTES.UPLOAD, handleUploadMiddleware, async (request, response,
 
     const expiresAt = new Date(Date.now() + config.jobRetentionMs).toISOString();
 
+    // --- Owner binding (decision D6/D13) ---
+    let ownerType: "user" | "anonymous";
+    let userId: string | undefined;
+    let accessTokenHash: string | undefined;
+    let plaintextToken: string | undefined;
+
+    if (request.user) {
+      ownerType = "user";
+      userId = request.user.uid;
+    } else {
+      ownerType = "anonymous";
+      const { token, hash } = generateAnonymousAccessTokenWithHash();
+      plaintextToken = token;
+      accessTokenHash = hash;
+    }
+
     const job = await createJob({
       jobId,
       originalFileName: file.originalname,
@@ -155,16 +345,29 @@ router.post(API_ROUTES.UPLOAD, handleUploadMiddleware, async (request, response,
       status: "queued",
       progress: PROGRESS.QUEUED,
       message: "변환 작업이 대기열에 등록되었습니다.",
+      ownerType,
+      userId,
+      accessTokenHash,
     });
 
-    void convertJobToPdf({ jobId: job.jobId, sourcePath: job.sourcePath });
+    // Enqueue conversion via Cloud Tasks (or inline/mock in dev/test).
+    // The old `void convertJobToPdf(...)` fire-and-forget is replaced by
+    // a durable queue dispatch. See cloud-tasks-dispatcher.ts for mode
+    // resolution (cloud-tasks / inline / mock).
+    void enqueueConversionJob(job.jobId);
 
-    const body: UploadResponse = {
+    const body: UploadResponse & { accessToken?: string; accessTokenHeader?: string } = {
       jobId: job.jobId,
       status: job.status,
       message: job.message,
       expiresAt: job.expiresAt,
     };
+
+    // Return the plaintext anonymous access token exactly once.
+    if (plaintextToken !== undefined) {
+      body.accessToken = plaintextToken;
+      body.accessTokenHeader = ANONYMOUS_ACCESS_TOKEN_HEADER;
+    }
 
     response.status(202).location(`${API_ROUTES.JOBS}/${job.jobId}`).json(body);
   } catch (error) {
@@ -172,29 +375,130 @@ router.post(API_ROUTES.UPLOAD, handleUploadMiddleware, async (request, response,
   }
 });
 
-router.get(`${API_ROUTES.JOBS}/:jobId`, async (request, response, next) => {
-  const job = await getJob(request.params.jobId);
-  if (!job) {
-    next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
+router.get(`${API_ROUTES.JOBS}/:jobId`, optionalAuth, async (request, response, next) => {
+  try {
+    const job = await getJob(getParam(request, "jobId"));
+    if (!job) {
+      next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
+      return;
+    }
+
+    const owner = getJobOwnerFields(job);
+
+    // --- Owner-aware jobs: enforce access control (decision D6/D13) ---
+    // For jobs with ownerType set, the caller must prove ownership:
+    //   - anonymous: X-Job-Access-Token header matching the stored hash
+    //   - user: valid Firebase ID token with matching uid
+    // Without valid credentials, return 401 (missing) or 403 (wrong).
+    // Legacy jobs (no ownerType) remain publicly readable for backwards
+    // compatibility, but downloadUrl is always omitted from the response.
+    if (owner.ownerType) {
+      const verifier = buildOwnerVerifier(job);
+      const credentials = buildOwnerCredentials(request);
+      const result = verifier?.(credentials);
+
+      if (!result?.authorized) {
+        const hasAnyCredential = credentials.anonymousToken || credentials.user;
+        const code = hasAnyCredential ? "forbidden" : "unauthorized";
+        const status = hasAnyCredential ? 403 : 401;
+        next(new ApiError(status, code, "작업 상태 조회 권한이 없습니다."));
+        return;
+      }
+
+      // Owner verified — include downloadUrl if available.
+      const body = await getStatusResponse(job, verifier, credentials);
+      response.json(body);
+      return;
+    }
+
+    // Legacy job (no owner fields): deny access per plan guardrail
+    // "jobId 단독으로 회원/비회원 job status나 downloadUrl 반환 금지".
+    next(new ApiError(401, "unauthorized", "작업 상태 조회 권한이 없습니다."));
     return;
+  } catch (error) {
+    next(error);
   }
-
-  const body: JobStatusResponse = {
-    jobId: job.jobId,
-    status: job.status,
-    progress: job.progress,
-    message: job.message,
-    downloadUrl: job.downloadUrl,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
-    expiresAt: job.expiresAt,
-  };
-
-  response.json(body);
 });
 
-router.get("/v1/results/:fileName", async (request, response, next) => {
-  const { fileName } = request.params;
+// ---------------------------------------------------------------------------
+// Protected download endpoint (decision D6/D13, Metis warning).
+//
+// Streams the result PDF only after owner verification. For anonymous jobs,
+// the client must present the `X-Job-Access-Token` header. For member jobs,
+// the client must present a valid Firebase ID token matching the job owner.
+//
+// In GCS mode, this endpoint mints a fresh short-lived signed URL and
+// redirects (302). In local mode, it streams the file directly via
+// res.download().
+// ---------------------------------------------------------------------------
+
+router.get(`${API_ROUTES.JOBS}/:jobId/download`, optionalAuth, async (request, response, next) => {
+  try {
+    const job = await getJob(getParam(request, "jobId"));
+    if (!job) {
+      next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
+      return;
+    }
+
+    if (job.status === "expired") {
+      await removeLocalResultFile(job.resultPath);
+      next(new ApiError(410, "job_expired", job.message ?? "다운로드 가능 시간이 만료되었습니다."));
+      return;
+    }
+
+    if (job.status !== "completed" || (!job.resultPath && !job.resultObjectPath)) {
+      next(new ApiError(409, "result_not_ready", "아직 다운로드할 수 있는 PDF가 없습니다."));
+      return;
+    }
+
+    const verifier = buildOwnerVerifier(job);
+    const credentials = buildOwnerCredentials(request);
+
+    if (verifier) {
+      const result = verifier(credentials);
+      if (!result.authorized) {
+        // Use 403 for wrong token, 401 for missing token — consistent with
+        // the plan's HTTP boundary checks.
+        const hasAnyCredential = credentials.anonymousToken || credentials.user;
+        const code = hasAnyCredential ? "forbidden" : "unauthorized";
+        const status = hasAnyCredential ? 403 : 401;
+        next(new ApiError(status, code, "다운로드 권한이 없습니다."));
+        return;
+      }
+    } else {
+      // Legacy job with no owner fields: deny download per plan guardrail
+      // "jobId 단독으로 회원/비회원 job status나 downloadUrl 반환 금지".
+      next(new ApiError(401, "unauthorized", "다운로드 권한이 없습니다."));
+      return;
+    }
+
+    // GCS mode: redirect to a fresh short-lived signed URL.
+    if (shouldUseGcs()) {
+      const downloadUrl = await getProtectedDownloadUrl(job);
+      if (!downloadUrl) {
+        next(new ApiError(409, "result_not_ready", "다운로드 URL을 생성할 수 없습니다."));
+        return;
+      }
+      response.redirect(302, downloadUrl);
+      return;
+    }
+
+    // Local mode: stream the file directly.
+    if (!job.resultPath) {
+      next(new ApiError(409, "result_not_ready", "다운로드할 파일이 없습니다."));
+      return;
+    }
+
+    response.download(path.resolve(job.resultPath), `${job.jobId}.pdf`, (error) => {
+      if (error) next(error);
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get(API_ROUTES.RESULTS, optionalAuth, async (request, response, next) => {
+  const fileName = getParam(request, "fileName");
   if (!fileName.endsWith(".pdf")) {
     next(new ApiError(404, "result_not_found", "다운로드 파일을 찾을 수 없습니다."));
     return;
@@ -218,7 +522,324 @@ router.get("/v1/results/:fileName", async (request, response, next) => {
     return;
   }
 
+  // Require owner verification for all jobs. Legacy jobs without owner
+  // fields are denied per plan guardrail.
+  const verifier = buildOwnerVerifier(job);
+  if (!verifier) {
+    next(new ApiError(401, "unauthorized", "다운로드 권한이 없습니다."));
+    return;
+  }
+  const credentials = buildOwnerCredentials(request);
+  const result = verifier(credentials);
+  if (!result.authorized) {
+    const hasAnyCredential = credentials.anonymousToken || credentials.user;
+    const code = hasAnyCredential ? "forbidden" : "unauthorized";
+    const status = hasAnyCredential ? 403 : 401;
+    next(new ApiError(status, code, "다운로드 권한이 없습니다."));
+    return;
+  }
+
   response.download(path.resolve(job.resultPath), `${job.jobId}.pdf`, (error) => {
     if (error) next(error);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Internal worker endpoint — Cloud Tasks conversion worker (Todo 6).
+//
+// This endpoint is invoked by Cloud Tasks with an OIDC service account token.
+// It is NOT a public endpoint — requireWorkerOidc middleware verifies the
+// Bearer token audience/issuer/email before processing.
+//
+// Idempotency: if the job is not in "queued" status (already completed,
+// processing, failed, deleted, or expired), the worker returns 200 no-op.
+// This ensures duplicate Cloud Tasks deliveries do not double-convert.
+//
+// The worker:
+//   1. Verifies OIDC token (middleware).
+//   2. Fetches the job by jobId from the request body.
+//   3. No-ops if the job is not in "queued" status (idempotent).
+//   4. Sets status to "processing" (optimistic lock: only transition from "queued").
+//   5. Calls conversionService.convertJobToPdf(job).
+//   6. On success: the conversion service sets status to "completed".
+//   7. On failure: the conversion service sets status to "failed" with a safe message.
+//   8. Returns 200 regardless of conversion outcome (Cloud Tasks should not
+//      retry terminal failures; only retryable failures like transient errors
+//      should cause a 5xx response to trigger Cloud Tasks retry).
+// ---------------------------------------------------------------------------
+
+router.post("/internal/workers/convert", requireWorkerOidc, async (request, response, next) => {
+  try {
+    const body = request.body as { jobId?: string };
+    if (!body.jobId || typeof body.jobId !== "string") {
+      next(new ApiError(422, "invalid_worker_request", "jobId가 필요합니다."));
+      return;
+    }
+
+    const job = await getJob(body.jobId);
+
+    // Idempotent no-op: job not found (may have been purged).
+    if (!job) {
+      response.status(200).json({ ok: true, noop: true, reason: "job_not_found" });
+      return;
+    }
+
+    // Idempotent no-op: job is deleted/tombstoned. Do not resurrect.
+    if (job.status === "deleted" || job.deletedAt) {
+      response.status(200).json({ ok: true, noop: true, reason: "job_deleted" });
+      return;
+    }
+
+    // Idempotent no-op: job is expired.
+    if (job.status === "expired") {
+      response.status(200).json({ ok: true, noop: true, reason: "job_expired" });
+      return;
+    }
+
+    // Idempotent no-op: job already completed or failed.
+    // Duplicate Cloud Tasks delivery should not re-convert.
+    if (job.status === "completed" || job.status === "failed") {
+      response.status(200).json({ ok: true, noop: true, reason: `job_${job.status}` });
+      return;
+    }
+
+    // Idempotent no-op: job is already being processed by another worker
+    // invocation. This prevents double-conversion on duplicate delivery.
+    if (job.status === "processing") {
+      response.status(200).json({ ok: true, noop: true, reason: "job_already_processing" });
+      return;
+    }
+
+    // Only process jobs in "queued" status.
+    if (job.status !== "queued") {
+      response.status(200).json({ ok: true, noop: true, reason: `job_${job.status}` });
+      return;
+    }
+
+    // Optimistic lock: transition queued -> processing before conversion.
+    // The current JobStore API does not expose a conditional compare-and-set;
+    // the pre-check above plus this early status write provides the MVP lock
+    // boundary for duplicate Cloud Tasks deliveries. A future Firestore
+    // transaction should enforce status === "queued" at write time.
+    await updateJob(job.jobId, {
+      status: "processing",
+      progress: PROGRESS.PROCESSING_START,
+      message: "변환 작업을 처리하고 있습니다.",
+    });
+
+    // Run the conversion. The conversion service handles:
+    //   - Setting status to "processing" at start.
+    //   - Setting status to "completed" on success (with resultPath, downloadUrl).
+    //   - Setting status to "failed" on error (with safe message).
+    //   - Cleaning up the source file in finally.
+    try {
+      await convertJobToPdf({ jobId: job.jobId, sourcePath: job.sourcePath });
+      response.status(200).json({ ok: true, jobId: job.jobId, status: "completed" });
+    } catch (error) {
+      // The conversion service already set status to "failed" internally.
+      // Return 200 so Cloud Tasks does not retry — the failure is terminal
+      // (e.g. LibreOffice crash, file corruption). Only return 5xx for
+      // retryable failures (transient infrastructure errors).
+      const message = error instanceof Error ? error.message : "unknown error";
+      const isRetryable = isRetryableConversionError(message);
+
+      if (isRetryable) {
+        // Return 500 to trigger Cloud Tasks retry.
+        response.status(500).json({
+          ok: false,
+          jobId: job.jobId,
+          error: "retryable_conversion_failure",
+          message: "일시적 변환 오류가 발생했습니다. 재시도됩니다.",
+        });
+      } else {
+        // Terminal failure — conversion service already set status to "failed".
+        response.status(200).json({
+          ok: false,
+          jobId: job.jobId,
+          status: "failed",
+          message: "변환에 실패했습니다.",
+        });
+      }
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Classify a conversion error as retryable or terminal.
+ *
+ * Retryable: transient infrastructure errors that may succeed on retry.
+ *   - Timeout / ECONNRESET / ENOTFOUND
+ *   - LibreOffice process crash (may succeed on retry)
+ *   - "spawn" errors (may indicate temporary resource exhaustion)
+ *
+ * Terminal: errors that will not succeed on retry.
+ *   - File not found / corrupted HWP
+ *   - Invalid file format
+ *   - Permission denied (configuration issue)
+ */
+function isRetryableConversionError(message: string): boolean {
+  const retryablePatterns = [
+    "ETIMEDOUT",
+    "ECONNRESET",
+    "ENOTFOUND",
+    "ECONNREFUSED",
+    "spawn",
+    "timeout",
+    "temporary",
+    "retry",
+  ];
+
+  const lower = message.toLowerCase();
+  return retryablePatterns.some((p) => lower.includes(p.toLowerCase()));
+}
+
+// ---------------------------------------------------------------------------
+// Member job history and deletion API (Todo 7 — decision D7/D12).
+//
+// These endpoints are member-only (requireAuth). They use the owner-aware
+// job-store methods (getJobForUser, listJobsByUser, markJobDeleted) so that
+// ownership is enforced at the data layer — a user can never see or delete
+// another user's job.
+//
+//   GET    /v1/me/jobs          — list caller's non-deleted jobs (newest first)
+//   GET    /v1/me/jobs/:jobId   — single job detail (404 if not owned, 410 if deleted)
+//   DELETE /v1/me/jobs/:jobId   — idempotent soft-delete with file cleanup
+//
+// Delete semantics:
+//   - 409 if the job is currently "processing" (cannot cancel in MVP).
+//   - Best-effort file deletion via storageService.deleteStoredJobFiles.
+//   - markJobDeleted sets a 30-day tombstone and strips downloadUrl/object paths.
+//   - Repeat delete returns 200 (idempotent — getJobForUser returns null for
+//     deleted tombstones, so the route treats it as already-deleted success).
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a JobRecord to a JobStatusResponse for the member history endpoints.
+ *
+ * Includes downloadUrl only when the job is completed, the download deadline
+ * has not passed, and a result file or object path exists. This mirrors the
+ * getStatusResponse logic but is simplified for the member-history context
+ * where ownership is already verified by getJobForUser/listJobsByUser.
+ */
+async function toMemberJobResponse(job: JobRecord): Promise<JobStatusResponse> {
+  let downloadUrl: string | undefined;
+
+  if (job.status === "completed" && (job.resultPath || job.resultObjectPath)) {
+    const deadline = job.downloadExpiresAt ?? job.expiresAt;
+    if (Date.parse(deadline) > Date.now()) {
+      downloadUrl = await getProtectedDownloadUrl(job);
+    }
+  }
+
+  return {
+    jobId: job.jobId,
+    status: job.status as UploadStatus,
+    progress: job.progress,
+    message: job.message,
+    downloadUrl,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    expiresAt: job.expiresAt,
+    downloadExpiresAt: job.downloadExpiresAt,
+    metadataExpiresAt: job.metadataExpiresAt,
+  };
+}
+
+// GET /v1/me/jobs — list the caller's non-deleted jobs, sorted by createdAt desc.
+
+router.get(API_ROUTES.ME_JOBS, requireAuth, async (request, response, next) => {
+  try {
+    if (!request.user) {
+      next(new ApiError(401, "unauthorized", "인증이 필요합니다."));
+      return;
+    }
+
+    const jobs = await listJobsByUser(request.user.uid, { includeDeleted: false });
+    const body: JobStatusResponse[] = await Promise.all(jobs.map(toMemberJobResponse));
+    response.json(body);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /v1/me/jobs/:jobId — single job detail for the caller.
+
+router.get(`${API_ROUTES.ME_JOBS}/:jobId`, requireAuth, async (request, response, next) => {
+  try {
+    if (!request.user) {
+      next(new ApiError(401, "unauthorized", "인증이 필요합니다."));
+      return;
+    }
+
+    const jobId = getParam(request, "jobId");
+    const job = await getJobForUser(jobId, request.user.uid);
+
+    // getJobForUser returns null for not-found, other-user, or deleted jobs.
+    // Distinguish deleted-tombstone (410) from not-found (404) by checking
+    // the raw job record.
+    if (!job) {
+      const raw = await getJob(jobId);
+      if (raw && raw.status === "deleted") {
+        next(new ApiError(410, "job_deleted", "삭제된 작업입니다."));
+        return;
+      }
+      next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
+      return;
+    }
+
+    const body = await toMemberJobResponse(job);
+    response.json(body);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /v1/me/jobs/:jobId — idempotent soft-delete with file cleanup.
+
+router.delete(`${API_ROUTES.ME_JOBS}/:jobId`, requireAuth, async (request, response, next) => {
+  try {
+    if (!request.user) {
+      next(new ApiError(401, "unauthorized", "인증이 필요합니다."));
+      return;
+    }
+
+    const jobId = getParam(request, "jobId");
+    const job = await getJobForUser(jobId, request.user.uid);
+
+    if (!job) {
+      // Idempotent delete: if the job is already deleted (tombstone), return 200.
+      // getJobForUser returns null for deleted jobs, so we check the raw record.
+      const raw = await getJob(jobId);
+      if (raw && raw.status === "deleted") {
+        response.status(200).json({ ok: true, jobId, status: "deleted", noop: true });
+        return;
+      }
+      next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
+      return;
+    }
+
+    // Refuse to delete a job that is currently processing.
+    if (job.status === "processing") {
+      next(new ApiError(409, "job_processing", "처리 중인 작업은 삭제할 수 없습니다. 완료 후 다시 시도하세요."));
+      return;
+    }
+
+    // Best-effort delete stored files (GCS objects + local files).
+    await deleteStoredJobFiles(job);
+
+    // Soft-delete: set tombstone, strip downloadUrl/object paths.
+    await markJobDeleted(jobId, request.user.uid);
+
+    response.status(200).json({ ok: true, jobId, status: "deleted" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Board routes (Todo 8 — members-only board API)
+// ---------------------------------------------------------------------------
+
+router.use(boardRouter);

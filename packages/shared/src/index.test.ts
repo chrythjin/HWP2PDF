@@ -1,8 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED_EXTENSIONS,
+  API_ROUTES,
   MAX_FILE_SIZE,
+  PROGRESS,
+  UPLOAD_SESSION_TTL_MS,
+  ANONYMOUS_ACCESS_TOKEN_HEADER,
+  BOARD_CATEGORIES,
+  BOARD_DEFAULT_PAGE_SIZE,
+  BOARD_MAX_PAGE_SIZE,
+  DEFAULT_DOWNLOAD_TTL_MS,
+  DEFAULT_METADATA_RETENTION_MS,
+  TOMBSTONE_RETENTION_MS,
   validateFile,
+  validateBoardCategory,
+  validateBoardPost,
+  validateUploadSession,
+  type UploadStatus,
+  type JobOwner,
+  type UploadSession,
+  type AnonymousAccessTokenResponse,
+  type JobStatusResponse,
+  type BoardPost,
+  type BoardPostSummary,
+  type BoardListResponse,
+  type BoardCreatePostRequest,
+  type BoardListRequest,
 } from "./index";
 
 const invalidExtensionError = "현재는 .hwp 파일만 지원합니다.";
@@ -40,5 +63,302 @@ describe("validateFile", () => {
 describe("shared constants", () => {
   it("exports the allowed HWP extension", () => {
     expect(ALLOWED_EXTENSIONS).toEqual([".hwp"]);
+  });
+});
+
+describe("API_ROUTES", () => {
+  it("includes the legacy health/upload/jobs routes", () => {
+    expect(API_ROUTES.HEALTH).toBe("/health");
+    expect(API_ROUTES.UPLOAD).toBe("/v1/upload");
+    expect(API_ROUTES.UPLOADS_INITIATE).toBe("/v1/uploads/initiate");
+    expect(API_ROUTES.UPLOADS_COMPLETE).toBe("/v1/uploads/complete");
+    expect(API_ROUTES.JOBS).toBe("/v1/jobs");
+  });
+
+  it("includes member-scoped job routes", () => {
+    expect(API_ROUTES.ME_JOBS).toBe("/v1/me/jobs");
+    expect(typeof API_ROUTES.ME_JOB).toBe("string");
+    expect(API_ROUTES.ME_JOB).toContain(":jobId");
+  });
+
+  it("includes results route", () => {
+    expect(API_ROUTES.RESULTS).toBe("/v1/results/:fileName");
+  });
+
+  it("includes board routes", () => {
+    expect(API_ROUTES.BOARD_POSTS).toBe("/v1/board/posts");
+    expect(typeof API_ROUTES.BOARD_POST).toBe("string");
+    expect(API_ROUTES.BOARD_POST).toContain(":postId");
+  });
+});
+
+describe("UploadStatus", () => {
+  it("includes the deleted tombstone status", () => {
+    const statuses: UploadStatus[] = [
+      "idle",
+      "uploading",
+      "queued",
+      "processing",
+      "completed",
+      "failed",
+      "expired",
+      "deleted",
+    ];
+    for (const status of statuses) {
+      expect(typeof status).toBe("string");
+    }
+  });
+});
+
+describe("JobOwner", () => {
+  it("supports user and anonymous owner types", () => {
+    const userOwner: JobOwner = { ownerType: "user", userId: "uid-123" };
+    const anonymousOwner: JobOwner = { ownerType: "anonymous", accessTokenHash: "hash-abc" };
+
+    expect(userOwner.ownerType).toBe("user");
+    expect(userOwner.userId).toBe("uid-123");
+    expect(anonymousOwner.ownerType).toBe("anonymous");
+    expect(anonymousOwner.accessTokenHash).toBe("hash-abc");
+  });
+});
+
+describe("UploadSession", () => {
+  it("captures initiate/complete ownership binding fields", () => {
+    const session: UploadSession = {
+      jobId: "job-1",
+      objectPath: "originals/job-1/sample.hwp",
+      fileName: "sample.hwp",
+      fileSize: 1024,
+      ownerType: "anonymous",
+      accessTokenHash: "hash-abc",
+      expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
+    };
+
+    expect(session.jobId).toBe("job-1");
+    expect(session.ownerType).toBe("anonymous");
+    expect(session.accessTokenHash).toBe("hash-abc");
+    expect(session.fileName).toBe("sample.hwp");
+    expect(session.fileSize).toBe(1024);
+  });
+
+  it("supports user-owned sessions without access token hash", () => {
+    const session: UploadSession = {
+      jobId: "job-2",
+      objectPath: "originals/job-2/doc.hwp",
+      fileName: "doc.hwp",
+      fileSize: 2048,
+      ownerType: "user",
+      userId: "uid-456",
+      expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+
+    expect(session.ownerType).toBe("user");
+    expect(session.userId).toBe("uid-456");
+    expect(session.accessTokenHash).toBeUndefined();
+    expect(session.completedAt).toBeDefined();
+  });
+});
+
+describe("AnonymousAccessTokenResponse", () => {
+  it("returns plaintext token only in the response, never stored", () => {
+    const tokenResponse: AnonymousAccessTokenResponse = {
+      jobId: "job-1",
+      accessToken: "plaintext-token-once",
+      header: ANONYMOUS_ACCESS_TOKEN_HEADER,
+    };
+
+    expect(tokenResponse.accessToken).toBe("plaintext-token-once");
+    expect(tokenResponse.header).toBe(ANONYMOUS_ACCESS_TOKEN_HEADER);
+    expect(tokenResponse.jobId).toBe("job-1");
+  });
+});
+
+describe("JobStatusResponse retention fields", () => {
+  it("supports download and metadata expiry fields plus deleted tombstone", () => {
+    const response: JobStatusResponse = {
+      jobId: "job-1",
+      status: "completed",
+      downloadExpiresAt: new Date(Date.now() + DEFAULT_DOWNLOAD_TTL_MS).toISOString(),
+      metadataExpiresAt: new Date(Date.now() + DEFAULT_METADATA_RETENTION_MS).toISOString(),
+    };
+
+    expect(response.downloadExpiresAt).toBeDefined();
+    expect(response.metadataExpiresAt).toBeDefined();
+  });
+
+  it("supports deleted tombstone fields", () => {
+    const response: JobStatusResponse = {
+      jobId: "job-1",
+      status: "deleted",
+      deletedAt: new Date().toISOString(),
+      deletedBy: "uid-123",
+      tombstoneUntil: new Date(Date.now() + TOMBSTONE_RETENTION_MS).toISOString(),
+    };
+
+    expect(response.status).toBe("deleted");
+    expect(response.deletedAt).toBeDefined();
+    expect(response.deletedBy).toBe("uid-123");
+    expect(response.tombstoneUntil).toBeDefined();
+  });
+});
+
+describe("board DTOs", () => {
+  it("exports board categories general, qna, notice", () => {
+    expect(BOARD_CATEGORIES).toEqual(["general", "qna", "notice"]);
+  });
+
+  it("validates a valid board category", () => {
+    expect(validateBoardCategory("general").valid).toBe(true);
+    expect(validateBoardCategory("qna").valid).toBe(true);
+    expect(validateBoardCategory("notice").valid).toBe(true);
+  });
+
+  it("rejects an invalid board category", () => {
+    const result = validateBoardCategory("random");
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
+  it("validates a valid board post request", () => {
+    const result = validateBoardPost({
+      title: "Valid title",
+      body: "Valid body content",
+      category: "general",
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejects a board post with empty title", () => {
+    const result = validateBoardPost({
+      title: "",
+      body: "body",
+      category: "general",
+    });
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
+  it("rejects a board post with invalid category", () => {
+    const result = validateBoardPost({
+      title: "title",
+      body: "body",
+      category: "invalid",
+    });
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
+  it("BoardPost includes server-derived author fields", () => {
+    const post: BoardPost = {
+      id: "post-1",
+      title: "title",
+      body: "body",
+      category: "general",
+      authorId: "uid-123",
+      authorName: "Alice",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    expect(post.authorId).toBe("uid-123");
+    expect(post.authorName).toBe("Alice");
+  });
+
+  it("BoardListResponse includes pagination meta", () => {
+    const list: BoardListResponse = {
+      data: [],
+      meta: {
+        total: 0,
+        page: 1,
+        pageSize: BOARD_DEFAULT_PAGE_SIZE,
+        totalPages: 0,
+      },
+    };
+
+    expect(list.meta.pageSize).toBe(BOARD_DEFAULT_PAGE_SIZE);
+    expect(list.meta.totalPages).toBe(0);
+  });
+
+  it("BoardListRequest clamps pageSize to max", () => {
+    expect(BOARD_MAX_PAGE_SIZE).toBeGreaterThan(BOARD_DEFAULT_PAGE_SIZE);
+  });
+});
+
+describe("validateUploadSession", () => {
+  it("accepts a valid anonymous upload session", () => {
+    const result = validateUploadSession({
+      jobId: "job-1",
+      objectPath: "originals/job-1/sample.hwp",
+      fileName: "sample.hwp",
+      fileSize: 1024,
+      ownerType: "anonymous",
+      accessTokenHash: "hash-abc",
+      expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it("accepts a valid user upload session", () => {
+    const result = validateUploadSession({
+      jobId: "job-2",
+      objectPath: "originals/job-2/doc.hwp",
+      fileName: "doc.hwp",
+      fileSize: 2048,
+      ownerType: "user",
+      userId: "uid-456",
+      expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejects an anonymous session without access token hash", () => {
+    const result = validateUploadSession({
+      jobId: "job-3",
+      objectPath: "originals/job-3/doc.hwp",
+      fileName: "doc.hwp",
+      fileSize: 2048,
+      ownerType: "anonymous",
+      expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
+    });
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
+  it("rejects a user session without userId", () => {
+    const result = validateUploadSession({
+      jobId: "job-4",
+      objectPath: "originals/job-4/doc.hwp",
+      fileName: "doc.hwp",
+      fileSize: 2048,
+      ownerType: "user",
+      expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
+    });
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+});
+
+describe("no password/login DTOs exported", () => {
+  it("does not export LoginRequest, SignUpRequest, AuthTokens, or refresh routes", () => {
+    // This test enforces the guardrail: no server password/login DTOs.
+    // We verify by importing the module namespace and checking keys.
+    // Vitest supports dynamic import() in ESM mode.
+    return import("./index").then((mod) => {
+      const moduleExports = Object.keys(mod);
+      expect(moduleExports).not.toContain("LoginRequest");
+      expect(moduleExports).not.toContain("SignUpRequest");
+      expect(moduleExports).not.toContain("AuthTokens");
+      expect(API_ROUTES).not.toHaveProperty("AUTH_LOGIN");
+      expect(API_ROUTES).not.toHaveProperty("AUTH_SIGNUP");
+      expect(API_ROUTES).not.toHaveProperty("AUTH_REFRESH");
+    });
+  });
+});
+
+describe("PROGRESS constants", () => {
+  it("retains existing progress constants", () => {
+    expect(PROGRESS.UPLOAD_START).toBe(5);
+    expect(PROGRESS.COMPLETED).toBe(100);
   });
 });

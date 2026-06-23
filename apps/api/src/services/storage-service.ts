@@ -1,10 +1,29 @@
 import fs from "node:fs/promises";
 import { Storage } from "@google-cloud/storage";
+import {
+  ANONYMOUS_ACCESS_TOKEN_HEADER,
+  type JobStatusResponse,
+  type UploadStatus,
+} from "@hwp2pdf/shared";
 import { config } from "../config.js";
+import type { JobRecord } from "./job-store.js";
+import { verifyAccessTokenHash } from "../utils/token.js";
+import type { AuthenticatedUser } from "../middleware/auth.js";
 
 const hwpContentType = "application/octet-stream";
 const pdfContentType = "application/pdf";
 export const directUploadUrlTtlMs = 10 * 60 * 1000;
+
+/**
+ * TTL for protected download signed URLs minted after owner verification.
+ *
+ * Kept very short (default 2 minutes) so that even if a URL leaks after being
+ * issued to an authenticated client, the exposure window is minimal. This is
+ * separate from the longer {@link config.signedDownloadUrlTtlMs} used for the
+ * legacy unconditional publish path, which is being phased out.
+ */
+export const PROTECTED_DOWNLOAD_URL_TTL_MS =
+  Number(process.env.PROTECTED_DOWNLOAD_URL_TTL_MS ?? 2 * 60 * 1000);
 
 type UploadKind = "original" | "result";
 
@@ -24,6 +43,233 @@ function getBucket() {
   });
 
   return storageClient.bucket(config.gcsBucketName);
+}
+
+// ---------------------------------------------------------------------------
+// Owner verification (decision D6/D13)
+// ---------------------------------------------------------------------------
+
+/**
+ * Owner verifier result. When `authorized` is true, the caller may receive
+ * `downloadUrl` in the status response or use the download endpoint.
+ */
+export interface OwnerVerification {
+  authorized: boolean;
+  /** Reason code for logging/diagnostics; never contains tokens or paths. */
+  reason: "anonymous_token_match" | "user_owner_match" | "no_owner" | "token_mismatch" | "user_mismatch" | "missing_token" | "missing_user" | "anonymous_no_token";
+}
+
+/**
+ * Input for {@link createOwnerVerifier}. The job record is captured at verifier
+ * creation time; the request-side credentials are passed to the verifier call.
+ */
+export interface OwnerVerifierInput {
+  job: JobRecord;
+  /** Anonymous access token hash from the job record, if anonymous-owned. */
+  accessTokenHash?: string;
+  /** User ID of the job owner, if user-owned. */
+  userId?: string;
+  /** Owner type discriminator. */
+  ownerType: "user" | "anonymous";
+}
+
+/**
+ * Request-side credentials presented by the caller.
+ */
+export interface OwnerCredentials {
+  /** Plaintext anonymous access token from the `X-Job-Access-Token` header. */
+  anonymousToken?: string;
+  /** Authenticated Firebase user from `requireAuth`/`optionalAuth` middleware. */
+  user?: AuthenticatedUser;
+}
+
+/**
+ * Create an owner verifier bound to a specific job's ownership metadata.
+ *
+ * The verifier performs constant-time token comparison for anonymous jobs and
+ * direct userId equality for member jobs. It never logs tokens or object paths.
+ */
+export function createOwnerVerifier(input: OwnerVerifierInput) {
+  return function verifyOwner(credentials: OwnerCredentials): OwnerVerification {
+    if (input.ownerType === "anonymous") {
+      if (!input.accessTokenHash) {
+        return { authorized: false, reason: "no_owner" };
+      }
+      if (!credentials.anonymousToken) {
+        return { authorized: false, reason: "anonymous_no_token" };
+      }
+      const match = verifyAccessTokenHash(credentials.anonymousToken, input.accessTokenHash);
+      return match
+        ? { authorized: true, reason: "anonymous_token_match" }
+        : { authorized: false, reason: "token_mismatch" };
+    }
+
+    if (input.ownerType === "user") {
+      if (!input.userId) {
+        return { authorized: false, reason: "no_owner" };
+      }
+      if (!credentials.user) {
+        return { authorized: false, reason: "missing_user" };
+      }
+      const match = credentials.user.uid === input.userId;
+      return match
+        ? { authorized: true, reason: "user_owner_match" }
+        : { authorized: false, reason: "user_mismatch" };
+    }
+
+    return { authorized: false, reason: "no_owner" };
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Protected download URL (decision: fresh signed URL after verification)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mint a fresh short-lived signed download URL for a job's result file, only
+ * after owner verification has passed.
+ *
+ * In local mode, returns the proxy download route URL (no signed URL needed;
+ * the route itself performs auth). In GCS mode, mints a v4 signed URL with
+ * {@link PROTECTED_DOWNLOAD_URL_TTL_MS} expiry.
+ *
+ * @param job - The job record with a completed result.
+ * @returns The download URL string, or undefined if no result is available.
+ */
+export async function getProtectedDownloadUrl(job: JobRecord): Promise<string | undefined> {
+  if (job.status !== "completed") return undefined;
+  if (!job.resultPath && !job.resultObjectPath) return undefined;
+
+  if (!shouldUseGcs()) {
+    // Local mode: the proxy download route handles auth + file streaming.
+    return `${config.resultUrlBase.replace(/\/v1\/results$/, "")}/v1/jobs/${job.jobId}/download`;
+  }
+
+  if (!job.resultObjectPath) return undefined;
+
+  const [downloadUrl] = await getBucket().file(job.resultObjectPath).getSignedUrl({
+    version: "v4",
+    action: "read",
+    expires: Date.now() + PROTECTED_DOWNLOAD_URL_TTL_MS,
+  });
+
+  return downloadUrl;
+}
+
+// ---------------------------------------------------------------------------
+// Status response builder (omits downloadUrl when unauthorized)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a {@link JobStatusResponse} from a job record, optionally including
+ * `downloadUrl` only when the owner verifier has authorized the caller.
+ *
+ * Without a verifier (or when verification fails), `downloadUrl` is always
+ * omitted from the response. This is the core download-boundary guard.
+ */
+export async function getStatusResponse(
+  job: JobRecord,
+  verifier?: (credentials: OwnerCredentials) => OwnerVerification,
+  credentials?: OwnerCredentials,
+): Promise<JobStatusResponse> {
+  let downloadUrl: string | undefined;
+
+  if (verifier && credentials) {
+    const result = verifier(credentials);
+    if (result.authorized) {
+      downloadUrl = await getProtectedDownloadUrl(job);
+    }
+  }
+
+  return {
+    jobId: job.jobId,
+    status: job.status as UploadStatus,
+    progress: job.progress,
+    message: job.message,
+    downloadUrl,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    expiresAt: job.expiresAt,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Idempotent file deletion (decision D7/D12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Best-effort delete a GCS object. Does not throw if the object is missing.
+ * Errors are logged with a generic message — object paths are never included
+ * in logs or thrown errors.
+ */
+async function deleteGcsObject(objectPath: string | undefined): Promise<void> {
+  if (!objectPath || !shouldUseGcs()) return;
+
+  try {
+    await getBucket().file(objectPath).delete({ ignoreNotFound: true });
+  } catch (error) {
+    // Log a generic error without the object path to avoid leaking names.
+    const detail = error instanceof Error ? error.message : "unknown";
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "GCS object deletion failed",
+        detail: detail.replace(objectPath, "[REDACTED_PATH]"),
+      }),
+    );
+  }
+}
+
+/**
+ * Best-effort delete a local file. Does not throw if the file is missing.
+ * Errors are logged with a generic message — file paths are never included.
+ */
+async function deleteLocalFile(localPath: string | undefined): Promise<void> {
+  if (!localPath || shouldUseGcs()) return;
+
+  try {
+    await fs.rm(localPath, { force: true });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown";
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "Local file deletion failed",
+        detail: detail.replace(localPath, "[REDACTED_PATH]"),
+      }),
+    );
+  }
+}
+
+/**
+ * Idempotently delete all stored files for a job: GCS original, GCS result,
+ * local upload, and local result.
+ *
+ * - Does not throw if objects/files are missing.
+ * - Does not leak object paths or file names in errors or logs.
+ * - Each deletion is best-effort and independent; a failure on one does not
+ *   prevent the others from being attempted.
+ *
+ * @param job - The job record whose files should be deleted.
+ */
+export async function deleteStoredJobFiles(job: JobRecord): Promise<void> {
+  await Promise.all([
+    deleteGcsObject(job.originalObjectPath),
+    deleteGcsObject(job.resultObjectPath),
+    deleteLocalFile(job.sourcePath),
+    deleteLocalFile(job.resultPath),
+  ]);
+}
+
+/**
+ * Extract anonymous access token from request headers using the shared header
+ * name constant. Returns undefined if the header is absent.
+ */
+export function extractAnonymousTokenFromHeaders(headers: Record<string, string | string[] | undefined>): string | undefined {
+  const value = headers[ANONYMOUS_ACCESS_TOKEN_HEADER.toLowerCase()]
+    ?? headers[ANONYMOUS_ACCESS_TOKEN_HEADER];
+  if (Array.isArray(value)) return value[0];
+  return typeof value === "string" ? value : undefined;
 }
 
 export function createObjectPath(kind: UploadKind, jobId: string, fileName: string) {

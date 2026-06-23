@@ -33,10 +33,14 @@ This folder is the project documentation entry point for future OpenCode session
 - Cloud Run HWP→PDF conversion was verified end-to-end (initiate, GCS upload, complete, job polling, PDF download) after fixing LibreOffice JRE, H2Orestart extension registration, rate-limit `ipKeyGenerator` validation, and LibreOffice `-env:UserInstallation` syntax. Warm-up profile in `/app/.lo-profile` reduced conversion time from ~112s to ~92s. See `sessions/20260620_010000_hwp-conversion-cloud-run-fix.md`.
 - AdSense integration added to the frontend: required legal pages (`/privacy`, `/terms`, `/contact`), main-page content enrichment, and the AdSense script injected into the HTML head. Vercel auto-deploy pipeline was restored by fixing pnpm availability and syncing `NEXT_PUBLIC_ADSENSE_CLIENT` to the Vercel project environment. See `sessions/20260620_110000_adsense-integration-and-vercel-ci-fix.md`.
 - `apps/web/public/ads.txt` was added to resolve the AdSense "Publisher content missing / ads.txt not found" warning for `hwp2pdf-phi.vercel.app`. A Vercel deploy is pending to make it live. See `sessions/20260621_034000_add-adsense-ads-txt.md`.
+- Auth, history, delete, and board features are implemented and tested locally. Firebase Auth production verification, Cloud Tasks queue, and Firestore persistence require GCP staging environment access. See `sessions/20260623_074518_auth-history-delete-board.md`.
 
-## Roadmaps and plans
+## Design / planning
 
-- `plan/auth-history-delete-board-roadmap.md` - planned roadmap for adding Firebase Authentication, conversion history, file deletion, and a members-only board while keeping anonymous conversion.
+- `plan/auth-history-delete-board-roadmap.md` - Auth, history, deletion, board roadmap; full final implementation plan copied from `.omo/plans/auth-history-delete-board-final.md`.
+- `operations/api-cloud-run-runtime.md` - runtime deployment contract for the roadmap: Firebase Admin ADC/fallback credentials, Cloud Tasks queue/OIDC, Firestore collections, and GCS lifecycle.
+- `.github/workflows/deploy-api-cloud-run.yml` - Cloud Run API deployment workflow with Firebase Admin, Firestore, GCS, and Cloud Tasks environment wiring.
+- `.github/workflows/deploy-web-vercel.yml` - Vercel deployment workflow with Firebase client and API base URL variables.
 
 ## Session notes
 
@@ -55,4 +59,12 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260619_232000_vercel-404-diagnosis.md` - diagnosed live `404 NOT_FOUND` on `https://hwp2pdf-phi.vercel.app`; verified Cloud Run API is healthy and identified missing/correct Vercel project settings and GitHub Actions secrets as the root cause.
 - `sessions/20260620_110000_adsense-integration-and-vercel-ci-fix.md` - added AdSense integration, required legal pages, main-page content enrichment, and restored the GitHub Actions → Vercel auto-deploy pipeline.
 - `sessions/20260621_034000_add-adsense-ads-txt.md` - added `apps/web/public/ads.txt` to satisfy the Google AdSense authorized digital sellers requirement and verified it serves locally.
-
+- `sessions/20260622_184323_storage-delete-download-boundary.md` - added idempotent file deletion helpers and protected download boundary with owner verification (Todo 4 of auth-history-delete-board plan).
+- `sessions/20260622_184508_firebase-admin-auth-primitives.md` - Firebase Admin SDK integration, ID token verification middleware, and custom claims setup (Todo 2 of auth-history-delete-board plan).
+- `sessions/20260622_192156_board-api-permission-matrix.md` - Board API with category filter, pagination, admin/boardModerator permission enforcement, and CRUD routes (Todo 7 of auth-history-delete-board plan).
+- `sessions/20260622_193300_cloud-tasks-worker-dispatcher.md` - Cloud Tasks HTTP task dispatcher, inline/mock fallback modes, and OIDC worker authentication (Todo 5 of auth-history-delete-board plan).
+- `sessions/20260622_201719_web-firebase-auth-shell.md` - added web Firebase auth shell, login/signup pages, auth-aware navigation, and bearer-token API client (Todo 9 of auth-history-delete-board plan).
+- `sessions/20260622_201831_board-ui.md` - Board UI: list, write, edit pages with category filter, pagination, and admin-only notice gating (Todo 8 of auth-history-delete-board plan).
+- `sessions/20260622_202000_upload-ui-anonymous-token.md` - Anonymous upload token generation, X-Job-Access-Token header flow, and DropzoneUploader auth integration (Todo 3 of auth-history-delete-board plan).
+- `sessions/20260622_230000_auth-history-delete-board-deployment.md` - finalized deployment workflows, smoke tests, and docs for Firebase/Cloud Tasks/IAM/Firestore/GCS (Todo 13 of auth-history-delete-board plan).
+- `sessions/20260623_074518_auth-history-delete-board.md` - completed Todo 13 follow-up: inline service-account fallback wiring, final plan copy, docs index update, build/test/smoke evidence refresh.

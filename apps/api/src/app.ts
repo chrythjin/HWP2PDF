@@ -33,7 +33,9 @@ export async function createApp() {
       },
       skip: (request) => {
         const path = request.path;
-        return path === "/health" || path.startsWith("/v1/jobs/");
+        // Skip rate limiting for health checks, job status polling, and
+        // internal worker endpoints (Cloud Tasks calls should not be rate-limited).
+        return path === "/health" || path.startsWith("/v1/jobs/") || path.startsWith("/internal/");
       },
       message: {
         error: {

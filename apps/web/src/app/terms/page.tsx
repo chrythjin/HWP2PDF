@@ -14,7 +14,7 @@ export default function TermsPage() {
 
         <div className="prose dark:prose-invert text-zinc-700 dark:text-zinc-300 space-y-6">
           <p>
-            본 이용약관은 HWP2PDF(이하 "본 서비스")를 이용하는 사용자와 운영자 간의 권리, 의무 및 책임 사항을 규정합니다.
+            본 이용약관은 HWP2PDF(이하 ‘본 서비스’)를 이용하는 사용자와 운영자 간의 권리, 의무 및 책임 사항을 규정합니다.
             본 서비스를 이용함으로써 사용자는 본 약관에 동의한 것으로 간주됩니다.
           </p>
 
@@ -32,14 +32,21 @@ export default function TermsPage() {
 
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">3. 책임의 한계</h2>
           <p>
-            본 서비스는 "있는 그대로(as-is)" 제공됩니다. 변환 결과물의 정확성, 완전성, 적합성에 대해 보증하지 않습니다.
+            본 서비스는 ‘있는 그대로(as-is)’ 제공됩니다. 변환 결과물의 정확성, 완전성, 적합성에 대해 보증하지 않습니다.
             변환으로 인해 발생할 수 있는 데이터 손실, 레이아웃 변경, 글꼴 차이 등에 대해 운영자는 책임을 지지 않습니다.
           </p>
 
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">4. 파일 보관 및 삭제</h2>
           <p>
-            업로드된 파일과 변환 결과는 <strong>변환 완료 후 최대 30분</strong> 동안 임시 보관되며,
-            이후 자동 삭제됩니다. 사용자는 변환 완료 후 즉시 결과를 다운로드할 책임이 있습니다.
+            업로드된 원본 파일과 변환 결과 파일은 모든 사용자에 대해 변환 완료 후 자동으로 삭제됩니다.
+            회원으로 로그인한 경우 변환 이력 메타데이터가 <strong>최대 30일</strong>간 보관되며, 회원은 이 기간 내 이력 조회 및 개별 작업 삭제가 가능합니다.
+            회원이 작업을 삭제하면 해당 메타데이터는 즉시 삭제되고, 삭제 사실을 기록하는 tombstone이 <strong>30일</strong>간 보관된 후 영구 파기됩니다.
+          </p>
+          <p>
+            비회원(로그인하지 않은 사용자)의 작업은 업로드 시 발급되는 <strong>X-Job-Access-Token</strong> 접근 토큰으로 식별되며,
+            회원 이력이 저장되지 않고 접근 토큰으로만 조회할 수 있습니다.
+            비회원 작업은 직접 삭제가 지원되지 않으며, <strong>변환 완료 후 30분</strong> 경과 시 자동으로 영구 삭제됩니다.
+            사용자는 변환 완료 후 즉시 결과를 다운로드할 책임이 있습니다.
           </p>
 
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">5. 지식재산권</h2>

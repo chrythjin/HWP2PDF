@@ -1,5 +1,6 @@
 "use client";
 
+import AuthNav from "./AuthNav";
 import Link from "next/link";
 
 interface PageLayoutProps {
@@ -33,6 +34,7 @@ export default function PageLayout({ children, showBackground = true }: PageLayo
           <div className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
             Free Online Converter
           </div>
+          <AuthNav />
         </div>
       </header>
 

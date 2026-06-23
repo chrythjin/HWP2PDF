@@ -14,7 +14,7 @@ export default function PrivacyPage() {
 
         <div className="prose dark:prose-invert text-zinc-700 dark:text-zinc-300 space-y-6">
           <p>
-            HWP2PDF(이하 "본 서비스")는 사용자의 개인정보를 최우선으로 보호하며, 「개인정보 보호법」 등 관련 법령을 준수합니다.
+            HWP2PDF(이하 ‘본 서비스’)는 사용자의 개인정보를 최우선으로 보호하며, 「개인정보 보호법」 등 관련 법령을 준수합니다.
             본 방침은 본 서비스가 수집하는 정보, 이용 목적, 보관 및 파기 방법을 설명합니다.
           </p>
 
@@ -36,8 +36,30 @@ export default function PrivacyPage() {
 
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">3. 개인정보의 보관 및 파기</h2>
           <p>
-            업로드된 원본 파일과 변환 결과 파일은 <strong>변환 완료 후 최대 30분</strong> 동안 임시로 보관되며,
-            이후 자동으로 영구 삭제됩니다. 별도의 데이터베이스에 개인정보를 영구 저장하지 않습니다.
+            본 서비스는 회원 여부에 따라 보관 및 파기 방식이 다릅니다. 원본 파일과 변환 결과 파일은 모든 경우에 변환 완료 후 자동으로 삭제됩니다.
+          </p>
+
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50 mt-6">3.1 회원 변환 이력</h3>
+          <p>
+            회원으로 로그인하여 변환한 경우, 변환 이력 메타데이터(작업 식별자, 상태, 시간 정보)가 <strong>최대 30일</strong>간 보관됩니다.
+            이 메타데이터에는 원본 파일 내용이나 변환 결과 파일 자체는 포함되지 않으며, 회원은 이 기간 내 언제든지 이력을 조회하고 개별 작업을 삭제할 수 있습니다.
+          </p>
+
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50 mt-6">3.2 삭제 및 tombstone</h3>
+          <p>
+            회원이 변환 이력에서 작업을 삭제하면 해당 메타데이터는 즉시 삭제되며, 삭제 사실을 기록하는 tombstone(묘비) 데이터가 <strong>30일</strong>간 보관된 후 영구 파기됩니다.
+            tombstone에는 원본 파일이나 결과 파일은 포함되지 않으며, 삭제 이력 추적 목적으로만 사용됩니다.
+          </p>
+
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50 mt-6">3.3 비회원 익명 접근 토큰</h3>
+          <p>
+            비회원(로그인하지 않은 사용자)의 변환 작업은 업로드 시 발급되는 <strong>X-Job-Access-Token</strong> 헤더 기반 접근 토큰으로 식별됩니다.
+            비회원은 회원 이력이 저장되지 않으며, 접근 토큰을 통해서만 자신의 작업 상태와 결과를 조회할 수 있습니다.
+            비회원 작업은 별도의 직접 삭제 기능 없이 <strong>변환 완료 후 30분</strong>이 지나면 자동으로 영구 삭제됩니다.
+          </p>
+
+          <p>
+            다운로드 링크는 소유자 검증을 거친 후 발급되는 단기 보호 URL이며, 일정 시간 경과 후 만료됩니다.
           </p>
 
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">4. 개인정보의 제3자 제공</h2>
@@ -48,7 +70,11 @@ export default function PrivacyPage() {
           </p>
 
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">5. 사용자의 권리</h2>
-          <p>사용자는 언제든지 자신의 파일을 삭제하거나 변환 작업을 중단할 수 있습니다. 문의사항은 <a href="/contact" className="text-blue-600 dark:text-blue-400 hover:underline">문의하기</a>를 통해 연락 주세요.</p>
+          <p>
+            회원은 변환 이력에서 언제든지 자신의 작업을 삭제할 수 있으며, 삭제 시 3.2에 따른 tombstone이 30일간 유지됩니다.
+            비회원은 접근 토큰을 통해 작업을 조회할 수 있으나 직접 삭제는 지원되지 않으며, 30분 TTL 경과 후 자동 삭제됩니다.
+            문의사항은 <a href="/contact" className="text-blue-600 dark:text-blue-400 hover:underline">문의하기</a>를 통해 연락 주세요.
+          </p>
 
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mt-8">6. 쿠키 및 광고</h2>
           <p>
@@ -59,7 +85,7 @@ export default function PrivacyPage() {
           <p>
             유럽 경제 지역(EEA), 영국, 스위스 사용자를 포함한 모든 방문자에게는
             Google의 동의 관리 플랫폼(CMP)을 통해 광고 및 쿠키 사용에 대한 동의를 요청합니다.
-            동의 메시지에서 "동의" 또는 "옵션 관리"를 선택하면 맞춤형 광고가 표시될 수 있습니다.
+            동의 메시지에서 ‘동의’ 또는 ‘옵션 관리’를 선택하면 맞춤형 광고가 표시될 수 있습니다.
           </p>
           <p>
             사용자는 언제든지 브라우저 설정에서 쿠키를 삭제하거나 차단할 수 있으며,

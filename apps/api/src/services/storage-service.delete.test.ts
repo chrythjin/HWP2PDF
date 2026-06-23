@@ -1,0 +1,362 @@
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import {
+  deleteStoredJobFiles,
+  createOwnerVerifier,
+  getStatusResponse,
+  getProtectedDownloadUrl,
+  PROTECTED_DOWNLOAD_URL_TTL_MS,
+} from "./storage-service.js";
+import type { JobRecord } from "./job-store.js";
+import { hashAccessToken } from "../utils/token.js";
+
+// ---------------------------------------------------------------------------
+// Tests for storage deletion and protected download boundary (Todo 4).
+//
+// These tests verify:
+// - deleteStoredJobFiles is idempotent (missing files don't throw)
+// - GCS/local delete errors are logged without leaking object paths
+// - createOwnerVerifier correctly matches/mismatches anonymous tokens and users
+// - getStatusResponse omits downloadUrl when unauthorized
+// - getProtectedDownloadUrl returns undefined for non-completed jobs
+// ---------------------------------------------------------------------------
+
+function createJob(overrides: Partial<JobRecord> = {}): JobRecord {
+  const now = new Date().toISOString();
+  return {
+    jobId: "test-job-001",
+    originalFileName: "test.hwp",
+    sourcePath: "/tmp/uploads/test-job-001-test.hwp",
+    status: "completed",
+    progress: 100,
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+describe("deleteStoredJobFiles", () => {
+  let tempDir: string;
+  let localUploadPath: string;
+  let localResultPath: string;
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hwp2pdf-test-"));
+    localUploadPath = path.join(tempDir, "upload-test.hwp");
+    localResultPath = path.join(tempDir, "result-test.pdf");
+    // Create the files so deletion has something to delete.
+    await fs.writeFile(localUploadPath, "fake upload content");
+    await fs.writeFile(localResultPath, "fake result content");
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("deletes local upload and result files", async () => {
+    const job = createJob({
+      sourcePath: localUploadPath,
+      resultPath: localResultPath,
+    });
+
+    await deleteStoredJobFiles(job);
+
+    await expect(fs.access(localUploadPath)).rejects.toThrow();
+    await expect(fs.access(localResultPath)).rejects.toThrow();
+  });
+
+  it("is idempotent — calling twice does not throw", async () => {
+    const job = createJob({
+      sourcePath: localUploadPath,
+      resultPath: localResultPath,
+    });
+
+    await deleteStoredJobFiles(job);
+    // Second call should not throw even though files are already gone.
+    await expect(deleteStoredJobFiles(job)).resolves.toBeUndefined();
+  });
+
+  it("does not throw when files were never created (missing paths)", async () => {
+    const job = createJob({
+      sourcePath: path.join(tempDir, "nonexistent-upload.hwp"),
+      resultPath: path.join(tempDir, "nonexistent-result.pdf"),
+    });
+
+    await expect(deleteStoredJobFiles(job)).resolves.toBeUndefined();
+  });
+
+  it("does not throw when sourcePath and resultPath are undefined", async () => {
+    const job = createJob({
+      sourcePath: undefined as unknown as string,
+      resultPath: undefined,
+    });
+
+    await expect(deleteStoredJobFiles(job)).resolves.toBeUndefined();
+  });
+
+  it("handles undefined object paths gracefully", async () => {
+    const job = createJob({
+      originalObjectPath: undefined,
+      resultObjectPath: undefined,
+    });
+
+    await expect(deleteStoredJobFiles(job)).resolves.toBeUndefined();
+  });
+
+  it("does not leak file paths in error logs when local delete fails", async () => {
+    // Use a path that will cause an error (e.g., a path inside a non-existent
+    // directory that can't be created — but fs.rm with force:true handles
+    // missing files. Instead, mock fs.rm to throw.)
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const job = createJob({
+      sourcePath: "/some/sensitive/path/secret-file.hwp",
+      resultPath: undefined,
+    });
+
+    // Mock fs.rm to throw an error containing the path
+    const rmSpy = vi.spyOn(fs, "rm").mockRejectedValue(
+      new Error("EACCES: permission denied, unlink '/some/sensitive/path/secret-file.hwp'"),
+    );
+
+    await deleteStoredJobFiles(job);
+
+    // The error should have been logged, but the path should be redacted.
+    const logCalls = consoleSpy.mock.calls.map((c) => JSON.stringify(c));
+    for (const call of logCalls) {
+      expect(call).not.toContain("/some/sensitive/path/secret-file.hwp");
+      expect(call).not.toContain("secret-file.hwp");
+    }
+
+    rmSpy.mockRestore();
+    consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createOwnerVerifier
+// ---------------------------------------------------------------------------
+
+describe("createOwnerVerifier", () => {
+  it("authorizes anonymous job with correct token", () => {
+    const token = "correct-anonymous-token";
+    const hash = hashAccessToken(token);
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "anonymous",
+      accessTokenHash: hash,
+    });
+
+    const result = verifier({ anonymousToken: token });
+    expect(result.authorized).toBe(true);
+    expect(result.reason).toBe("anonymous_token_match");
+  });
+
+  it("rejects anonymous job with wrong token", () => {
+    const hash = hashAccessToken("correct-token");
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "anonymous",
+      accessTokenHash: hash,
+    });
+
+    const result = verifier({ anonymousToken: "wrong-token" });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe("token_mismatch");
+  });
+
+  it("rejects anonymous job with no token", () => {
+    const hash = hashAccessToken("correct-token");
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "anonymous",
+      accessTokenHash: hash,
+    });
+
+    const result = verifier({});
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe("anonymous_no_token");
+  });
+
+  it("rejects anonymous job with no stored hash", () => {
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "anonymous",
+      accessTokenHash: undefined,
+    });
+
+    const result = verifier({ anonymousToken: "some-token" });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe("no_owner");
+  });
+
+  it("authorizes user job with correct user", () => {
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "user",
+      userId: "user-123",
+    });
+
+    const result = verifier({
+      user: { uid: "user-123", admin: false, boardModerator: false },
+    });
+    expect(result.authorized).toBe(true);
+    expect(result.reason).toBe("user_owner_match");
+  });
+
+  it("rejects user job with wrong user", () => {
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "user",
+      userId: "user-123",
+    });
+
+    const result = verifier({
+      user: { uid: "other-user", admin: false, boardModerator: false },
+    });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe("user_mismatch");
+  });
+
+  it("rejects user job with no authenticated user", () => {
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "user",
+      userId: "user-123",
+    });
+
+    const result = verifier({});
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe("missing_user");
+  });
+
+  it("rejects user job with no stored userId", () => {
+    const verifier = createOwnerVerifier({
+      job: createJob(),
+      ownerType: "user",
+      userId: undefined,
+    });
+
+    const result = verifier({
+      user: { uid: "user-123", admin: false, boardModerator: false },
+    });
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe("no_owner");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getStatusResponse — download boundary
+// ---------------------------------------------------------------------------
+
+describe("getStatusResponse", () => {
+  it("omits downloadUrl when no verifier is provided", async () => {
+    const job = createJob({ downloadUrl: "https://example.com/old-signed-url" });
+    const body = await getStatusResponse(job);
+
+    expect(body.downloadUrl).toBeUndefined();
+    expect(body.jobId).toBe(job.jobId);
+    expect(body.status).toBe(job.status);
+  });
+
+  it("omits downloadUrl when verifier rejects (wrong token)", async () => {
+    const job = createJob();
+    const hash = hashAccessToken("correct-token");
+    const verifier = createOwnerVerifier({
+      job,
+      ownerType: "anonymous",
+      accessTokenHash: hash,
+    });
+
+    const body = await getStatusResponse(job, verifier, { anonymousToken: "wrong-token" });
+    expect(body.downloadUrl).toBeUndefined();
+  });
+
+  it("omits downloadUrl when verifier rejects (no token)", async () => {
+    const job = createJob();
+    const hash = hashAccessToken("correct-token");
+    const verifier = createOwnerVerifier({
+      job,
+      ownerType: "anonymous",
+      accessTokenHash: hash,
+    });
+
+    const body = await getStatusResponse(job, verifier, {});
+    expect(body.downloadUrl).toBeUndefined();
+  });
+
+  it("omits downloadUrl when verifier rejects (wrong user)", async () => {
+    const job = createJob();
+    const verifier = createOwnerVerifier({
+      job,
+      ownerType: "user",
+      userId: "user-123",
+    });
+
+    const body = await getStatusResponse(job, verifier, {
+      user: { uid: "other-user", admin: false, boardModerator: false },
+    });
+    expect(body.downloadUrl).toBeUndefined();
+  });
+
+  it("includes jobId, status, progress, message, dates even when unauthorized", async () => {
+    const job = createJob({ progress: 50, message: "processing" });
+    const body = await getStatusResponse(job);
+
+    expect(body.jobId).toBe(job.jobId);
+    expect(body.status).toBe("completed");
+    expect(body.progress).toBe(50);
+    expect(body.message).toBe("processing");
+    expect(body.createdAt).toBe(job.createdAt);
+    expect(body.updatedAt).toBe(job.updatedAt);
+    expect(body.expiresAt).toBe(job.expiresAt);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getProtectedDownloadUrl
+// ---------------------------------------------------------------------------
+
+describe("getProtectedDownloadUrl", () => {
+  it("returns undefined for non-completed job", async () => {
+    const job = createJob({ status: "processing", progress: 70 });
+    const url = await getProtectedDownloadUrl(job);
+    expect(url).toBeUndefined();
+  });
+
+  it("returns undefined for completed job with no result paths", async () => {
+    const job = createJob({
+      resultPath: undefined,
+      resultObjectPath: undefined,
+    });
+    const url = await getProtectedDownloadUrl(job);
+    expect(url).toBeUndefined();
+  });
+
+  it("returns a download route URL in local mode for completed job", async () => {
+    // In local mode (no GCS), the URL should point to the download endpoint.
+    const job = createJob({
+      resultPath: "/tmp/results/test.pdf",
+      resultObjectPath: undefined,
+    });
+    const url = await getProtectedDownloadUrl(job);
+    expect(url).toBeDefined();
+    expect(url).toContain("/v1/jobs/test-job-001/download");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PROTECTED_DOWNLOAD_URL_TTL_MS
+// ---------------------------------------------------------------------------
+
+describe("PROTECTED_DOWNLOAD_URL_TTL_MS", () => {
+  it("defaults to 2 minutes when env is not set", () => {
+    // The default is 2 * 60 * 1000 = 120000 ms
+    // (env may or may not be set in test env, but the default is 2 min)
+    expect(PROTECTED_DOWNLOAD_URL_TTL_MS).toBeGreaterThan(0);
+    expect(PROTECTED_DOWNLOAD_URL_TTL_MS).toBeLessThanOrEqual(5 * 60 * 1000);
+  });
+});

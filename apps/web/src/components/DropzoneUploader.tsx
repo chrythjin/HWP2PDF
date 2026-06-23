@@ -5,6 +5,7 @@ import { type FileRejection, useDropzone } from "react-dropzone";
 import {
   API_ROUTES,
   ALLOWED_EXTENSIONS,
+  ANONYMOUS_ACCESS_TOKEN_HEADER,
   MAX_FILE_SIZE,
   MAX_POLLING_TIME,
   POLLING_INTERVAL,
@@ -16,12 +17,12 @@ import {
   type UploadStatus,
   validateFile,
 } from "@hwp2pdf/shared";
-
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
-
-function buildApiUrl(route: string) {
-  return `${apiBaseUrl.replace(/\/$/, "")}${route}`;
-}
+import { useAuth } from "@/auth/useAuth";
+import { fetchWithAuth, buildApiUrl } from "@/lib/api-client";
+import {
+  clearJobAccessToken,
+  saveJobAccessToken,
+} from "@/lib/upload-token";
 
 function readApiError(responseText: string, fallbackMessage: string) {
   try {
@@ -36,73 +37,115 @@ function isActiveStatus(status: UploadStatus) {
   return status === "uploading" || status === "queued" || status === "processing";
 }
 
+/**
+ * Extended upload response shape that includes the anonymous access token
+ * fields returned exactly once by the API for anonymous users.
+ */
+type UploadResponseWithToken = UploadResponse & {
+  accessToken?: string;
+  accessTokenHeader?: string;
+};
+
+type DirectUploadInitResponseWithToken = DirectUploadInitResponse & {
+  accessToken?: string;
+  accessTokenHeader?: string;
+};
+
 export default function DropzoneUploader() {
+  const { user } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const uploadSessionRef = useRef(0);
 
   const handleReset = useCallback(() => {
     uploadSessionRef.current += 1;
+    if (jobId) {
+      clearJobAccessToken(jobId);
+    }
     setFile(null);
     setStatus("idle");
     setProgress(0);
     setErrorMessage(null);
-    setDownloadUrl(null);
     setJobId(null);
-  }, []);
+  }, [jobId]);
 
-  const pollJobStatus = useCallback(async (currentJobId: string, startedAt: number, uploadSession: number) => {
-    while (uploadSessionRef.current === uploadSession) {
-      if (Date.now() - startedAt > MAX_POLLING_TIME) {
-        setStatus("failed");
-        setProgress(0);
-        setErrorMessage("변환 시간이 초과되었습니다. 잠시 후 다시 시도하세요.");
-        return;
-      }
-
-      try {
-        const response = await fetch(buildApiUrl(`${API_ROUTES.JOBS}/${currentJobId}`), {
-          cache: "no-store",
-        });
-
-        const responseText = await response.text();
-        if (!response.ok) {
-          throw new Error(readApiError(responseText, "작업 상태를 불러오지 못했습니다."));
-        }
-
-        const job = JSON.parse(responseText) as JobStatusResponse;
-        if (uploadSessionRef.current !== uploadSession) return;
-
-        setStatus(job.status);
-        setProgress(job.progress ?? (job.status === "queued" ? 60 : 80));
-
-        if (job.status === "completed") {
-          setProgress(100);
-          setDownloadUrl(job.downloadUrl ?? null);
-          setErrorMessage(job.downloadUrl ? null : "다운로드 링크를 받지 못했습니다.");
-          return;
-        }
-
-        if (job.status === "failed" || job.status === "expired") {
+  const pollJobStatus = useCallback(
+    async (currentJobId: string, currentToken: string | null, startedAt: number, uploadSession: number) => {
+      while (uploadSessionRef.current === uploadSession) {
+        if (Date.now() - startedAt > MAX_POLLING_TIME) {
+          setStatus("failed");
           setProgress(0);
-          setErrorMessage(job.message ?? "변환에 실패했습니다.");
+          setErrorMessage("변환 시간이 초과되었습니다. 잠시 후 다시 시도하세요.");
           return;
         }
-      } catch (error) {
-        if (uploadSessionRef.current !== uploadSession) return;
-        setStatus("failed");
-        setProgress(0);
-        setErrorMessage(error instanceof Error ? error.message : "작업 상태를 불러오는 중 오류가 발생했습니다.");
-        return;
-      }
 
-      await new Promise((resolve) => window.setTimeout(resolve, POLLING_INTERVAL));
-    }
-  }, []);
+        try {
+          const route = `${API_ROUTES.JOBS}/${currentJobId}`;
+          const headers: Record<string, string> = {};
+
+          // For anonymous jobs, attach the access token header.
+          // For logged-in users, fetchWithAuth adds Authorization.
+          if (!user && currentToken) {
+            headers[ANONYMOUS_ACCESS_TOKEN_HEADER] = currentToken;
+          }
+
+          const response = await fetchWithAuth(route, user, {
+            cache: "no-store",
+            headers,
+          });
+
+          const responseText = await response.text();
+
+          // Handle 401/403 — token missing or wrong.
+          if (response.status === 401 || response.status === 403) {
+            if (uploadSessionRef.current !== uploadSession) return;
+            setStatus("failed");
+            setProgress(0);
+            setErrorMessage(
+              response.status === 401
+                ? "접근 토큰이 없어 작업 상태를 조회할 수 없습니다. 페이지를 새로고침한 경우 변환을 다시 시도해 주세요."
+                : "접근 토큰이 올바르지 않아 작업 상태를 조회할 수 없습니다.",
+            );
+            return;
+          }
+
+          if (!response.ok) {
+            throw new Error(readApiError(responseText, "작업 상태를 불러오지 못했습니다."));
+          }
+
+          const job = JSON.parse(responseText) as JobStatusResponse;
+          if (uploadSessionRef.current !== uploadSession) return;
+
+          setStatus(job.status);
+          setProgress(job.progress ?? (job.status === "queued" ? 60 : 80));
+
+          if (job.status === "completed") {
+            setProgress(100);
+            setErrorMessage(job.downloadUrl ? null : "다운로드 링크를 받지 못했습니다.");
+            return;
+          }
+
+          if (job.status === "failed" || job.status === "expired") {
+            setProgress(0);
+            setErrorMessage(job.message ?? "변환에 실패했습니다.");
+            return;
+          }
+        } catch (error) {
+          if (uploadSessionRef.current !== uploadSession) return;
+          setStatus("failed");
+          setProgress(0);
+          setErrorMessage(error instanceof Error ? error.message : "작업 상태를 불러오는 중 오류가 발생했습니다.");
+          return;
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, POLLING_INTERVAL));
+      }
+    },
+    [user],
+  );
 
   const uploadFile = useCallback(
     async (selectedFile: File) => {
@@ -111,14 +154,21 @@ export default function DropzoneUploader() {
       setStatus("uploading");
       setProgress(0);
       setErrorMessage(null);
-      setDownloadUrl(null);
       setJobId(null);
 
-      const startPolling = (response: UploadResponse) => {
+      // Store the job ID + access token from the upload response and
+      // begin polling. For anonymous responses, persist the token to
+      // sessionStorage so a page reload can recover it.
+      const startPolling = (response: UploadResponseWithToken) => {
         setJobId(response.jobId);
         setStatus(response.status);
         setProgress(PROGRESS.QUEUED);
-        void pollJobStatus(response.jobId, Date.now(), uploadSession);
+
+        if (response.accessToken) {
+          saveJobAccessToken(response.jobId, response.accessToken);
+        }
+
+        void pollJobStatus(response.jobId, response.accessToken ?? null, Date.now(), uploadSession);
       };
 
       const uploadViaMultipart = async () => {
@@ -128,6 +178,16 @@ export default function DropzoneUploader() {
         await new Promise<void>((resolve) => {
           const request = new XMLHttpRequest();
           request.open("POST", buildApiUrl(API_ROUTES.UPLOAD));
+
+          // Attach Firebase ID token for logged-in users.
+          if (user) {
+            user.getIdToken().then((token) => {
+              request.setRequestHeader("Authorization", `Bearer ${token}`);
+              request.send(formData);
+            });
+          } else {
+            request.send(formData);
+          }
 
           request.upload.onprogress = (event) => {
             if (!event.lengthComputable) return;
@@ -148,7 +208,7 @@ export default function DropzoneUploader() {
               return;
             }
 
-            startPolling(JSON.parse(request.responseText) as UploadResponse);
+            startPolling(JSON.parse(request.responseText) as UploadResponseWithToken);
             resolve();
           };
 
@@ -163,12 +223,10 @@ export default function DropzoneUploader() {
             setErrorMessage("API 서버에 연결할 수 없습니다. 서버 실행 상태와 API 주소를 확인하세요.");
             resolve();
           };
-
-          request.send(formData);
         });
       };
 
-      const uploadToSignedUrl = async (upload: DirectUploadInitResponse) => {
+      const uploadToSignedUrl = async (upload: DirectUploadInitResponseWithToken) => {
         await new Promise<void>((resolve, reject) => {
           const request = new XMLHttpRequest();
           request.open("PUT", upload.uploadUrl);
@@ -197,9 +255,11 @@ export default function DropzoneUploader() {
       };
 
       try {
-        const initResponse = await fetch(buildApiUrl(API_ROUTES.UPLOADS_INITIATE), {
+        const initHeaders: Record<string, string> = { "Content-Type": "application/json" };
+
+        const initResponse = await fetchWithAuth(API_ROUTES.UPLOADS_INITIATE, user, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: initHeaders,
           body: JSON.stringify({
             fileName: selectedFile.name,
             fileSize: selectedFile.size,
@@ -216,12 +276,18 @@ export default function DropzoneUploader() {
           throw new Error(readApiError(initText, "직접 업로드 URL을 만들지 못했습니다."));
         }
 
-        const directUpload = JSON.parse(initText) as DirectUploadInitResponse;
+        const directUpload = JSON.parse(initText) as DirectUploadInitResponseWithToken;
         await uploadToSignedUrl(directUpload);
 
-        const completeResponse = await fetch(buildApiUrl(API_ROUTES.UPLOADS_COMPLETE), {
+        // Attach the anonymous access token to the complete request if present.
+        const completeHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (!user && directUpload.accessToken) {
+          completeHeaders[ANONYMOUS_ACCESS_TOKEN_HEADER] = directUpload.accessToken;
+        }
+
+        const completeResponse = await fetchWithAuth(API_ROUTES.UPLOADS_COMPLETE, user, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: completeHeaders,
           body: JSON.stringify({
             jobId: directUpload.jobId,
             objectPath: directUpload.objectPath,
@@ -236,7 +302,7 @@ export default function DropzoneUploader() {
         }
 
         if (uploadSessionRef.current !== uploadSession) return;
-        startPolling(JSON.parse(completeText) as UploadResponse);
+        startPolling(JSON.parse(completeText) as UploadResponseWithToken);
       } catch (error) {
         if (uploadSessionRef.current !== uploadSession) return;
         setStatus("failed");
@@ -244,8 +310,9 @@ export default function DropzoneUploader() {
         setErrorMessage(error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.");
       }
     },
-    [pollJobStatus],
+    [pollJobStatus, user],
   );
+
   const onDrop = useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
       if (isActiveStatus(status)) return;
@@ -289,6 +356,15 @@ export default function DropzoneUploader() {
     maxSize: MAX_FILE_SIZE,
     disabled: isActiveStatus(status),
   });
+
+  // Build the download URL. For anonymous jobs, we use the protected
+  // download endpoint with the token sent as a header (never in the URL).
+  // For logged-in users, fetchWithAuth handles Authorization.
+  // The download link points to the protected endpoint; the browser will
+  // follow the 302 redirect to the short-lived signed URL.
+  const downloadHref = jobId
+    ? buildApiUrl(`${API_ROUTES.JOBS}/${jobId}/download`)
+    : "#";
 
   return (
     <div className="w-full max-w-xl mx-auto">
@@ -405,7 +481,7 @@ export default function DropzoneUploader() {
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
             <a
-              href={downloadUrl ?? "#"}
+              href={downloadHref}
               download
               className="flex items-center justify-center space-x-2 px-6 py-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg hover:shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
             >
