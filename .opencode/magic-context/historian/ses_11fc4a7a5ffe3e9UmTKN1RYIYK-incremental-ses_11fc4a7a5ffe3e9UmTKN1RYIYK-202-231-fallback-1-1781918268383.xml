@@ -1,0 +1,142 @@
+<think>Let me analyze the new messages (202-231) and create compartments.
+
+**Message analysis:**
+
+[202-214] The agent investigated the Vercel frontend integration. Checked DropzoneUploader.tsx, found NEXT_PUBLIC_API_BASE_URL fallback. Tried to use Vercel CLI but token was unauthorized. Checked GitHub variables/secrets - NEXT_PUBLIC_API_BASE_URL wasn't there. Concluded that Vercel Dashboard settings need to be verified by the user. Updated session docs.
+
+[215] TODO continuation - 1 task remaining: Vercel frontend upload test
+
+[216-226] The agent ran a browser-qa test against the Vercel frontend. Found that:
+1. Vercel frontend works correctly
+2. NEXT_PUBLIC_API_BASE_URL is set correctly to Cloud Run URL
+3. BUT: rate-limit on `/v1/jobs/:jobId` polling was blocking after 25 polls (60/hour limit), causing the job to fail as "failed" even though it was still processing
+
+
+4. The fix was to skip rate-limiting for `/health` and `/v1/jobs/:jobId` endpoints, which allowed the conversion to complete successfully in about 105 seconds across 48 polls.
+
+[227] User asked why conversion takes so long
+
+[228] Agent explained cold start + LibreOffice initialization as the main causes
+
+[229] User requested cost-free options and wanted to know where converted results are stored
+
+[230-231] Agent committed the rate-limit skip fix, then investigated the bottleneck and located the converted PDF in the GCS bucket `hwp2pdf-bucket-1014` under `output/<jobId>/<jobId>.pdf` - the most recent one being `7f675795-e7f1-46be-9519-f59807bc52d4`. Started planning warm-up strategies and timing analysis.
+
+Now I'm identifying the core work units. The first one spans messages 202-214 where the agent resolved the Vercel frontend investigation - the token was unauthorized so the user had to check the Dashboard, and session docs were updated. The second unit runs through 215-226 where a browser test uncovered the rate-limit issue, the fix was applied and deployed, then the E2E test passed successfully. The third covers 227-228 where the user questioned conversion speed and the agent pinpointed cold start plus LibreOffice initialization as the culprits. Finally, 229-231 involves the user asking about cost-free options and where results are stored, which led to identifying the converted file location and beginning warm-up investigation.
+
+I'm noticing some overlap here - the session docs created in 202-214 were updated again in 216-226, so I should consolidate those rather than treat them as separate work units.
+
+Looking at the actual work done: the rate-limit fix was committed in two parts (f59807bc52d4 and 7f675795), the browser test happened, session docs were updated, and now I'm investigating GCS output and warm-up options. The E2E test completion and session doc updates belong together as one unit since they cover the same completion milestone.
+
+The user also asked about slow conversion and where results are stored - that's a separate concern worth documenting in its own compartment. The investigation into cost-free warm-up approaches and GCS result location is ongoing.
+
+For the rate-limit issue, the skip fix in app.ts is the core change, deployed and tested successfully via browser. The session doc update is documentation work that supports the broader fix work, not a separate logical unit.
+
+Looking at the actual work completed: the rate-limit skip fix itself (app.ts modification, build, commit, push, deploy), the E2E verification through browser-qa testing, and the session documentation all serve the same objective of resolving the polling failure. The cold start question and cost-free warm-up investigation are separate concerns the user raised.
+
+For the final compartment, I need to identify what's durable—the answer about cold start and initialization being the bottleneck is useful knowledge to retain, even though the specific job ID is just a recent example.
+
+The warm-up approaches (Dockerfile warm-up, code optimizations, logging analysis) are cost-free improvements worth noting. The key distinction is that 105 seconds is reasonable for cold start plus conversion with HWP, so the user's concern was really about understanding why it takes that long rather than needing it fixed immediately.
+
+I'm organizing this into three compartments: the rate-limit fix that unblocked the E2E test, the cold start explanation with diagnostic commands for the user to investigate, and the ongoing warm-up analysis for performance optimization. The session documentation and INDEX updates are supporting activities tied to the rate-limit work, not separate compartments.
+
+For the rate-limit fix, I need to extract the key facts: the skip logic for health and job polling endpoints, the specific GitHub commits, the Cloud Run revision, and the verification that polling now works without rate-limit errors. This is high-importance work that resolved a critical blocking issue and involved multiple code changes across the pipeline. The job ID from the E2E test is useful for the user to reference in their investigation. Now I need to figure out where the session docs should live and what's already been documented.
+
+Looking back, I see that session docs were created in 202-214, updated in 216-226, and again in 230-231. The INDEX was updated in multiple places too. Since this is a TODO continuation session, the docs are part of the work itself. I should write the compartments now and focus on the actionable insight: cold start is the primary cost-free lever, followed by code-level optimizations.
+
+For the events, the trajectory correction about the rate-limit skip is worth capturing—adding a skip function to exclude certain paths from rate limiting is a meaningful shift in how the system behaves. The causal incident around express-rate-limit v8's validation crash was already documented in project-memory, so that's handled. The rate-limit polling issue itself is a new constraint that emerged during this session.
+
+I'm going to scan the session references to see if any of this overlaps with what's already been documented. The rate-limit polling problem hasn't been seen before, so this is new information I need to add to the constraints. I should also check if there are any user observations I haven't captured yet.
+
+The user mentioned wanting cost-free options, which suggests they're price-sensitive. They also asked to verify the conversion results directly and requested the results location, indicating they want to see evidence rather than just trust the process. They asked in Korean and seem to prefer direct, practical follow-up over abstract suggestions. Now I'll prepare the output</think>
+
+
+
+```xml
+<output>
+<compartments>
+<compartment start="215" end="226" title="Rate-limit polling block resolved; full E2E via browser-qa verified conversion completes in ~105s" episode_type="bug,infra,investigation" importance="73">
+<p1>
+TODO continuation directive pushed agent to resolve the remaining task: Vercel frontend upload test. Agent launched a browser-qa subagent to test `https://hwp2pdf-phi.vercel.app` with a real HWP file from the user's Downloads folder.
+
+The browser-qa test found the Vercel frontend itself was healthy and `NEXT_PUBLIC_API_BASE_URL` was correctly set to the Cloud Run URL. However, the polling loop hit the global rate-limit (60/hour) after ~25 polls at 2-second intervals, causing the job to be marked as `failed` with a 429 error — even though conversion was still in progress at 70%.
+
+The fix was adding a `skip` function to the `app.ts` rate-limit middleware to exclude `/health` and `/v1/jobs/:jobId` paths from rate limiting:
+```typescript
+skip: (request) => {
+  const path = request.path;
+  return path === "/health" || path.startsWith("/v1/jobs/");
+},
+```
+
+Committed as `7f675795` and `f59807bc52d4`, deployed to Cloud Run revision `00007-snf`. After deploy, re-ran browser-qa E2E test: 48 polls over ~105 seconds, all returned 200, no 429. Conversion completed successfully — progress reached 100%, message "변환이 완료되었습니다.", and the download button appeared in the UI. Session docs updated.
+</p1>
+<p2>
+Browser-qa test revealed `/v1/jobs/:jobId` polling was hitting the 60/hour global rate limit after ~25 polls, marking jobs as failed before conversion finished. Fixed by adding `skip: (request) => request.path === "/health" || request.path.startsWith("/v1/jobs/")` in `app.ts` rate-limit config. Commits `7f675795`/`f59807bc52d4`, Cloud Run revision `00007-snf`. Full E2E verified: 48 polls, ~105s, no 429, conversion completed, download button shown.
+</p2>
+<p3>
+Job polling was rate-limited (60/hour global limit), causing premature failure marking. Fixed by skipping rate-limit for `/health` and `/v1/jobs/:jobId`. Full E2E browser test confirmed conversion completes successfully in ~105s.
+</p3>
+<p4>rate-limit skip; /v1/jobs/ polling excluded; 7f675795; f59807bc52d4; Cloud Run 00007-snf; browser-qa E2E 48 polls ~105s</p4>
+</compartment>
+
+<compartment start="227" end="231" title="Conversion speed explained: cold start + LibreOffice/JVM init; GCS result location provided" episode_type="investigation" importance="38">
+<p1>
+User asked why conversion takes so long and requested (1) cost-free improvement options and (2) verification of the converted result location.
+
+Agent explained the 105s is dominated by cold start + initialization, not conversion itself:
+1. **Cold start**: Cloud Run min instances defaults to 0 — container image must be pulled and started on first request
+2. **LibreOffice/JVM/H2Orestart first load**: JVM initialization, H2Orestart extension loading, font cache generation, and LibreOffice user profile creation all happen on the first conversion request
+
+Cost-free improvement options identified:
+- **Dockerfile warm-up** (no runtime cost): run `libreoffice --headless --nologo --nofirststartwizard` at build time to pre-create user profile and cache JVM/extensions
+- **Code-level optimizations**: reduce unnecessary Firestore writes, async cleanup — already minimal
+- **Cloud Run logging analysis**: use `gcloud logging read` with job ID filter to measure exact stage timings
+
+Agent identified the most recent conversion output in GCS: bucket `hwp2pdf-bucket-1014`, path `output/7f675795-e7f1-46be-9519-f59807bc52d4/7f675795-e7f1-46be-9519-f59807bc52d4.pdf`. Started `gcloud storage ls` and `gcloud logging read` to retrieve timing data for the user to verify results.
+</p1>
+<p2>
+User asked why 105s conversion time and wanted cost-free improvements + result verification.
+
+Agent identified three cost-free levers: (1) Dockerfile warm-up (pre-run LibreOffice at build time), (2) code-level cleanup of unnecessary writes, (3) Cloud Run logging analysis to pinpoint exact bottleneck. Most recent output in GCS: `hwp2pdf-bucket-1014/output/7f675795-e7f1-46be-9519-f59807bc52d4/`. Began gcloud commands to retrieve timing and file verification data.
+</p2>
+<p3>
+Conversion slowness explained as Cloud Run cold start + LibreOffice/JVM/H2Orestart first-load overhead, not conversion itself. Cost-free fix: Dockerfile warm-up step. Recent output in GCS at `output/<jobId>/<jobId>.pdf`. gcloud commands run to verify result and extract timing data.
+</p3>
+<p4>Cold start + LibreOffice/JVM init; Dockerfile warm-up; GCS output hwp2pdf-bucket-1014/output/; gcloud logging read for timing</p4>
+</compartment>
+</compartments>
+<facts>
+<CONSTRAINTS>
+* express-rate-limit v8 global rate limit (60/hour) applies to `/v1/jobs/:jobId` polling, causing jobs to be marked failed with 429 before conversion completes when polling at short intervals.
+* Cloud Run default min instances = 0 causes cold start on first request of a new container instance.
+</CONSTRAINTS>
+<PROJECT_RULES>
+* `/health` and `/v1/jobs/:jobId` paths are excluded from rate-limit protection to allow health checks and job polling without hitting the global request limit.
+</PROJECT_RULES>
+<CONFIG_VALUES>
+* GCS output path pattern: output/<jobId>/<jobId>.pdf in bucket hwp2pdf-bucket-1014
+</CONFIG_VALUES>
+</facts>
+<events>
+<causal_incident at_compartment="1">
+  <summary>Global rate-limit blocked job polling after ~25 requests, prematurely marking in-progress conversions as failed</summary>
+  <affected_surface>tool_protocol</affected_surface>
+  <symptom>Job status showed "failed" with 429 error during browser E2E test; 48 polls over 105s were needed for successful conversion</symptom>
+  <cause_summary>express-rate-limit v8 applied 60/hour limit globally including GET /v1/jobs/:jobId polling endpoint</cause_summary>
+  <disposition>fixed</disposition>
+  <evidence>Browser-qa test: "job polling이 2초 간격으로 25번 요청한 후 rate-limit 429를 받음" → added skip: (request) => request.path === "/health" || request.path.startsWith("/v1/jobs/")</evidence>
+  <fix_summary>Added skip function to rate-limit middleware in app.ts to exclude /health and /v1/jobs/:jobId paths; deployed to Cloud Run revision 00007-snf</fix_summary>
+</causal_incident>
+</events>
+<user_observations>
+* User asks in Korean and prefers terse, direct responses with concrete next steps.
+* User is cost-conscious — explicitly requested cost-free options before any Cloud Run configuration changes.
+* User wants to verify results directly rather than trusting reported outcomes — asked "변환 된 결과물 어디있어? 확인해보게".
+</user_observations>
+<meta>
+<messages_processed>202-231</messages_processed>
+<unprocessed_from>232</unprocessed_from>
+</meta>
+</output>
+```
