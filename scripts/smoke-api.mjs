@@ -65,6 +65,36 @@ async function readJson(response) {
   }
 }
 
+/**
+ * Fetch with retry on transient 5xx responses (Cloud Run cold-start can
+ * produce a 503 on the first request to a freshly deployed revision before
+ * the listener is fully accepting traffic). Retries up to 3 times with
+ * 1s backoff before giving up.
+ */
+async function fetchWithRetry(url, init = {}, maxAttempts = 3) {
+  let lastError;
+  let lastResponse;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(url, init);
+      if (response.status < 500) {
+        return response;
+      }
+      lastResponse = response;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+  }
+  if (lastResponse) return lastResponse;
+  throw lastError ?? new Error("fetchWithRetry: all attempts failed");
+}
+
 function assertStatus(label, response, expectedStatus) {
   if (response.status !== expectedStatus) {
     console.error(`FAIL ${label}: expected ${expectedStatus}, got ${response.status}`);
@@ -229,7 +259,7 @@ const meJobsNoAuth = await fetch(`${baseUrl}${ROUTES.ME_JOBS}`);
 assertStatusIn("member jobs without auth rejected", meJobsNoAuth, [401, 403]);
 
 // Test 6: POST /v1/board/posts without auth → 401
-const boardWriteNoAuth = await fetch(`${baseUrl}${ROUTES.BOARD_POSTS}`, {
+const boardWriteNoAuth = await fetchWithRetry(`${baseUrl}${ROUTES.BOARD_POSTS}`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
