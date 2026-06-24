@@ -155,7 +155,7 @@ if (mockMode) {
 console.log(`Running smoke tests against ${baseUrl}\n`);
 
 // Test 1: GET /health -> 200
-const health = await fetch(`${baseUrl}${ROUTES.HEALTH}`);
+const health = await fetchWithRetry(`${baseUrl}${ROUTES.HEALTH}`);
 const healthBody = await readJson(health);
 if (assertStatus("health returns 200", health, 200)) {
   assertTruthy("health status=ok", healthBody.status === "ok", `got status=${healthBody.status}`);
@@ -166,7 +166,7 @@ if (assertStatus("health returns 200", health, 200)) {
 // In GCS mode: POST /v1/uploads/initiate -> 201 with jobId + accessToken
 // In local mode: POST /v1/uploads/initiate -> 409 (direct_upload_unavailable)
 //   -> fall back to POST /v1/upload (multipart) -> 202 with jobId + accessToken
-const initiate = await fetch(`${baseUrl}${ROUTES.UPLOADS_INITIATE}`, {
+const initiate = await fetchWithRetry(`${baseUrl}${ROUTES.UPLOADS_INITIATE}`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -220,7 +220,7 @@ if (initiate.status === 201 || initiate.status === 409) {
   const fileBlob = new Blob([fakeHwpContent], { type: "application/octet-stream" });
   formData.append("file", fileBlob, "smoke.hwp");
 
-  const multipartUpload = await fetch(`${baseUrl}${ROUTES.UPLOAD}`, {
+  const multipartUpload = await fetchWithRetry(`${baseUrl}${ROUTES.UPLOAD}`, {
     method: "POST",
     body: formData,
   });
@@ -240,14 +240,14 @@ if (initiate.status === 201 || initiate.status === 409) {
 
 // Test 3: GET /v1/jobs/:jobId without token → 401 or 403
 if (anonymousJobId) {
-  const statusNoToken = await fetch(`${baseUrl}${ROUTES.JOBS}/${anonymousJobId}`);
+  const statusNoToken = await fetchWithRetry(`${baseUrl}${ROUTES.JOBS}/${anonymousJobId}`);
   assertStatusIn("job status without token rejected", statusNoToken, [401, 403]);
 } else {
   console.log("SKIP job status without token: no jobId from initiate");
 }
 
 // Test 4: POST /internal/workers/convert without OIDC → 401 or 403
-const workerNoOidc = await fetch(`${baseUrl}${ROUTES.WORKERS_CONVERT}`, {
+const workerNoOidc = await fetchWithRetry(`${baseUrl}${ROUTES.WORKERS_CONVERT}`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ jobId: "smoke-test-nonexistent" }),
@@ -255,7 +255,7 @@ const workerNoOidc = await fetch(`${baseUrl}${ROUTES.WORKERS_CONVERT}`, {
 assertStatusIn("worker endpoint without OIDC rejected", workerNoOidc, [401, 403]);
 
 // Test 5: GET /v1/me/jobs without auth → 401
-const meJobsNoAuth = await fetch(`${baseUrl}${ROUTES.ME_JOBS}`);
+const meJobsNoAuth = await fetchWithRetry(`${baseUrl}${ROUTES.ME_JOBS}`);
 assertStatusIn("member jobs without auth rejected", meJobsNoAuth, [401, 403]);
 
 // Test 6: POST /v1/board/posts without auth → 401
@@ -271,7 +271,7 @@ const boardWriteNoAuth = await fetchWithRetry(`${baseUrl}${ROUTES.BOARD_POSTS}`,
 assertStatusIn("board write without auth rejected", boardWriteNoAuth, [401, 403]);
 
 // Test 7: Invalid multipart upload → 422 (legacy check, kept for compatibility)
-const invalidUpload = await fetch(`${baseUrl}${ROUTES.UPLOAD}`, {
+const invalidUpload = await fetchWithRetry(`${baseUrl}${ROUTES.UPLOAD}`, {
   method: "POST",
 });
 assertStatus("invalid multipart upload rejected", invalidUpload, 422);
