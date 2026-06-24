@@ -153,7 +153,6 @@ if (initiate.status === 201) {
   console.log(`PASS anonymous upload initiate (GCS mode): ${initiate.status}`);
   passes++;
   assertTruthy("initiate returns jobId", !!initiateBody.jobId, "missing jobId");
-  anonymousJobId = initiateBody.jobId;
   if (initiateBody.accessToken) {
     anonymousAccessToken = initiateBody.accessToken;
     console.log("PASS initiate returns accessToken (anonymous token present)");
@@ -163,13 +162,28 @@ if (initiate.status === 201) {
     // It is returned at /uploads/complete instead. This is acceptable.
     console.log("NOTE: initiate did not return accessToken (expected in GCS direct-upload mode)");
   }
+
+  // The direct upload flow requires a GCS PUT to the signed URL and a
+  // /uploads/complete call to materialize the Firestore job record. In a
+  // smoke test we cannot perform the GCS PUT without external dependencies,
+  // so we always run the multipart upload below to create a real job
+  // record in Firestore for the status-without-token check.
+  console.log("NOTE: GCS direct upload requires an actual GCS PUT; creating a real job via multipart upload as well");
 } else if (initiate.status === 409) {
   // Local mode — direct upload unavailable, fall back to multipart upload.
   // The API intentionally returns 409 when STORAGE_BACKEND is not gcs.
   console.log(`NOTE: initiate returned 409 (local mode), trying multipart upload fallback`);
+} else {
+  console.error(`FAIL anonymous upload initiate: expected 201 or 409, got ${initiate.status}`);
+  failures++;
+}
 
-  // Create a minimal valid HWP file buffer for multipart upload.
-  // The upload middleware accepts any file with a .hwp extension.
+// Always create a real job record via multipart upload so the
+// status-without-token check below exercises the owner-aware auth guards
+// on a job that actually exists in Firestore. In GCS mode the multipart
+// upload still works and persists the original to GCS; in local mode
+// it's the only available path.
+if (initiate.status === 201 || initiate.status === 409) {
   const { Buffer } = await import("node:buffer");
   const fakeHwpContent = Buffer.from("HWP Document File V5.0.0.0\n", "utf-8");
   const formData = new FormData();
@@ -181,7 +195,7 @@ if (initiate.status === 201) {
     body: formData,
   });
   const multipartBody = await readJson(multipartUpload);
-  if (assertStatus("anonymous multipart upload (local mode fallback)", multipartUpload, 202)) {
+  if (assertStatus("anonymous multipart upload (creates real job)", multipartUpload, 202)) {
     assertTruthy("multipart upload returns jobId", !!multipartBody.jobId, "missing jobId");
     anonymousJobId = multipartBody.jobId;
     if (multipartBody.accessToken) {
@@ -192,9 +206,6 @@ if (initiate.status === 201) {
       console.log("NOTE: multipart upload did not return accessToken");
     }
   }
-} else {
-  console.error(`FAIL anonymous upload initiate: expected 201 or 409, got ${initiate.status}`);
-  failures++;
 }
 
 // Test 3: GET /v1/jobs/:jobId without token → 401 or 403
