@@ -40,3 +40,12 @@ coverage/
 # Misc
 .vercel
 *.tsbuildinfo
+
+# Operational metadata (boulder plans, evidence, notepads)
+.omo/
+
+# API temporary test files
+apps/api/tmp/
+
+# Graphify analysis output cache
+graphify-out/
