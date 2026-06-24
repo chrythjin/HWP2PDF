@@ -133,21 +133,6 @@ jobs:
             --set-env-vars INTERNAL_WORKER_URL="" \
             --set-env-vars INTERNAL_WORKER_AUDIENCE="${{ secrets.CLOUD_RUN_WORKER_AUDIENCE || '' }}"
 
-      - name: Grant Cloud Tasks Enqueuer and Invoker roles to service account
-        run: |
-          SA="${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL || secrets.CLOUD_RUN_API_SERVICE_ACCOUNT || vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}"
-          PROJECT="${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID }}"
-          # Cloud Tasks Enqueuer — allows the API to create HTTP tasks on the queue.
-          gcloud projects add-iam-policy-binding "$PROJECT" \
-            --member="serviceAccount:${SA}" \
-            --role="roles/cloudtasks.enqueuer" \
-            --condition=None || true
-          # Cloud Run Invoker — allows the Cloud Tasks service account to invoke the worker endpoint.
-          gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
-            --region="$REGION" \
-            --member="serviceAccount:${CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL}" \
-            --role="roles/run.invoker" || true
-
       - name: Smoke test deployed API
         run: |
           URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
