@@ -313,6 +313,7 @@ class FirestoreJobStore implements JobStore {
   private readonly firestore = new Firestore({
     projectId: config.firestoreProjectId || undefined,
     databaseId: config.firestoreDatabaseId,
+    ignoreUndefinedProperties: true,
   });
 
   private readonly collection = this.firestore.collection(config.firestoreJobsCollection);
