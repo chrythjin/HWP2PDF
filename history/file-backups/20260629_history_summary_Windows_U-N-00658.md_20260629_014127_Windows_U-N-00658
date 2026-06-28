@@ -1,0 +1,25 @@
+# 2026-06-29 History Summary (Windows / U-N-00658)
+
+## User Request
+
+- 로그인된 상태에서도 게시판 API가 401을 반환하는 문제의 API 서버 로그와 실제 원인을 확인.
+
+## Changes
+
+- `apps/api/src/services/firebase-admin.ts`를 Firebase Admin SDK v14 ESM API에 맞게 수정.
+- 루트 `firebase-admin` import 대신 `firebase-admin/app` 및 `firebase-admin/auth` 모듈을 사용.
+- `verifyIdToken`을 메서드 참조로 분리하지 않고 `Auth` 인스턴스에 바인딩된 호출로 실행.
+- 변경 전 백업 생성:
+  - `history/file-backups/auth.ts_20260629_011654_Windows_U-N-00658`
+  - `history/file-backups/firebase-admin.ts_20260629_011718_Windows_U-N-00658`
+
+## Before
+
+- Firebase ID 토큰의 `iss`/`aud`는 `hwp2pdf-499911`로 정상인데, API의 `GET /v1/board/posts?page=1`가 401을 반환.
+- `firebase-admin` 루트 import/direct method extraction 구조로 인해 SDK v14 런타임 API와 맞지 않음.
+
+## After
+
+- API 서버가 실제 Firebase ID 토큰을 검증해 게시판 목록 조회와 글 작성 요청에 200 응답.
+- 타입체크, 관련 API 테스트, API 빌드 통과.
+- 세션 문서 `docs/sessions/20260629_012412_fix-firebase-admin-auth.md`와 문서 인덱스 항목을 추가.
