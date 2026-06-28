@@ -125,6 +125,8 @@ The checked-in `.github/workflows/deploy-api-cloud-run.yml` builds the API image
 
 If any required deployment variable or secret is missing, the workflow preflight job succeeds and skips the deploy job instead of failing the push. Once all values are configured, the workflow deploys with `STORAGE_BACKEND=gcs`, `JOB_STORE_BACKEND=firestore`, `CONVERSION_DISPATCHER=cloud-tasks`, and `FIREBASE_ADMIN_MODE=adc`, then smoke-tests `/health`, anonymous upload initiate, token-required status, worker OIDC rejection, member endpoint rejection, and board write rejection.
 
+For the current test environment, keep Cloud Run at `--min-instances=0`, `--concurrency=1`, and `CLOUD_RUN_MAX_INSTANCES=1` to avoid idle spend and prevent multiple LibreOffice conversions from scaling out. Raising `CLOUD_RUN_MAX_INSTANCES` improves throughput but can multiply conversion cost during bursts.
+
 ## Firebase Admin authentication
 
 The API uses Firebase Admin SDK to verify Firebase ID tokens from the client. In Cloud Run production, ADC (Application Default Credentials) is the default and preferred mode — no service account key file is needed. The runtime service account must have Firebase Admin permissions (typically available by default in the Firebase project).
@@ -146,11 +148,13 @@ Before deploying with `CONVERSION_DISPATCHER=cloud-tasks`, create the queue:
 ```bash
 gcloud tasks queues create conversion-queue \
   --location=asia-northeast3 \
-  --max-concurrent-dispatches=10 \
-  --max-attempts=10 \
+  --max-concurrent-dispatches=1 \
+  --max-attempts=3 \
   --max-backoff=300s \
-  --max-dispatches-per-second=5
+  --max-dispatches-per-second=0.1
 ```
+
+These queue defaults intentionally favor low test cost over speed: at most one conversion is dispatched at a time, at most one new task every 10 seconds, and failed jobs are retried only three times.
 
 The Cloud Tasks service account (`CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`) must have `roles/run.invoker` on the Cloud Run API service so it can call the internal worker endpoint with an OIDC token.
 

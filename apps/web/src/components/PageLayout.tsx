@@ -2,6 +2,7 @@
 
 import AuthNav from "./AuthNav";
 import Link from "next/link";
+import { useAuth } from "@/auth/useAuth";
 
 interface PageLayoutProps {
   children: React.ReactNode;
@@ -9,6 +10,8 @@ interface PageLayoutProps {
 }
 
 export default function PageLayout({ children, showBackground = true }: PageLayoutProps) {
+  const { user, loading } = useAuth();
+
   return (
     <div className="relative flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950 transition-colors duration-300 overflow-hidden">
       {showBackground && (
@@ -31,9 +34,29 @@ export default function PageLayout({ children, showBackground = true }: PageLayo
               HWP<span className="text-blue-500 font-normal">2</span>PDF
             </span>
           </Link>
-          <div className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-            Free Online Converter
-          </div>
+          <nav className="hidden md:flex items-center space-x-6">
+            {user && (
+              <>
+                <Link
+                  href="/history"
+                  className="text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                >
+                  변환 이력
+                </Link>
+                <Link
+                  href="/board"
+                  className="text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                >
+                  게시판
+                </Link>
+              </>
+            )}
+            {!loading && !user && (
+              <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                Free Online Converter
+              </span>
+            )}
+          </nav>
           <AuthNav />
         </div>
       </header>

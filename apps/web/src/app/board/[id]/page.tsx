@@ -48,7 +48,7 @@ export default function BoardDetailPage() {
       setError(null);
       try {
         const route = `${API_ROUTES.BOARD_POSTS}/${postId}`;
-        const res = await fetchWithAuth(route, { method: "GET" });
+        const res = await fetchWithAuth(route, user, { method: "GET" });
         if (cancelled) return;
         if (res.status === 401) {
           setError("인증이 필요합니다. 로그인 후 이용해주세요.");
@@ -88,7 +88,7 @@ export default function BoardDetailPage() {
     setDeleting(true);
     try {
       const route = `${API_ROUTES.BOARD_POSTS}/${postId}`;
-      const res = await fetchWithAuth(route, { method: "DELETE" });
+      const res = await fetchWithAuth(route, user, { method: "DELETE" });
       if (res.status === 204) {
         router.push("/board");
         return;

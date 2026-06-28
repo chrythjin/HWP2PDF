@@ -84,6 +84,7 @@ vi.mock("@/lib/firebase", () => {
   return {
     getFirebaseAuth: vi.fn(() => mockAuth),
     auth: mockAuth,
+    isFirebaseConfigured: true,
   };
 });
 

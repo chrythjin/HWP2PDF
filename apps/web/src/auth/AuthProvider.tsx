@@ -16,7 +16,7 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { getFirebaseAuth } from "@/lib/firebase";
+import { getFirebaseAuth, isFirebaseConfigured } from "@/lib/firebase";
 
 export interface AuthContextValue {
   user: User | null;
@@ -43,18 +43,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(getFirebaseAuth(), (firebaseUser) => {
-      setUser(firebaseUser);
+    if (!isFirebaseConfigured) {
       setLoading(false);
-    });
+      return;
+    }
 
-    return () => {
-      unsubscribe();
-    };
+    try {
+      const unsubscribe = onAuthStateChanged(getFirebaseAuth(), (firebaseUser) => {
+        setUser(firebaseUser);
+        setLoading(false);
+      });
+
+      return () => {
+        unsubscribe();
+      };
+    } catch (err) {
+      console.error("Failed to initialize Firebase Auth listener:", err);
+      setLoading(false);
+    }
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
+    if (!isFirebaseConfigured) {
+      setError("Firebase가 구성되지 않아 로그인할 수 없습니다.");
+      return;
+    }
     try {
       await signInWithEmailAndPassword(getFirebaseAuth(), email, password);
     } catch (err) {
@@ -66,6 +80,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signup = useCallback(async (email: string, password: string) => {
     setError(null);
+    if (!isFirebaseConfigured) {
+      setError("Firebase가 구성되지 않아 회원가입할 수 없습니다.");
+      return;
+    }
     try {
       await createUserWithEmailAndPassword(getFirebaseAuth(), email, password);
     } catch (err) {
@@ -77,6 +95,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     setError(null);
+    if (!isFirebaseConfigured) {
+      setError("Firebase가 구성되지 않았습니다.");
+      return;
+    }
     try {
       await signOut(getFirebaseAuth());
     } catch (err) {

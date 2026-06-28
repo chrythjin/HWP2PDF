@@ -18,12 +18,22 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+export const isFirebaseConfigured = process.env.NODE_ENV === "test" || !!(
+  firebaseConfig.apiKey &&
+  firebaseConfig.apiKey !== "your-firebase-api-key" &&
+  firebaseConfig.projectId &&
+  firebaseConfig.projectId !== "your-project-id"
+);
+
 /**
  * Get or create the Firebase app instance. During Next.js hot reload,
  * `getApps()` will already contain an app, so we reuse it instead of
  * calling `initializeApp` again (which throws on duplicate name).
  */
 function getFirebaseApp(): FirebaseApp {
+  if (!isFirebaseConfigured) {
+    throw new Error("Firebase configuration is missing or invalid.");
+  }
   if (getApps().length > 0) {
     return getApp();
   }

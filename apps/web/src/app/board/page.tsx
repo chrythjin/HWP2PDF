@@ -48,7 +48,7 @@ export default function BoardListPage() {
         params.set("category", category);
       }
       const route = `${API_ROUTES.BOARD_POSTS}?${params.toString()}`;
-      const res = await fetchWithAuth(route, { method: "GET" });
+      const res = await fetchWithAuth(route, user, { method: "GET" });
       if (res.status === 401) {
         setError("인증이 필요합니다. 로그인 후 이용해주세요.");
         return;

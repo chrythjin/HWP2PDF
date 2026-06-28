@@ -100,7 +100,7 @@ export default function BoardWritePage() {
     setSubmitting(true);
 
     try {
-      const res = await fetchWithAuth(API_ROUTES.BOARD_POSTS, {
+      const res = await fetchWithAuth(API_ROUTES.BOARD_POSTS, user, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, body, category }),

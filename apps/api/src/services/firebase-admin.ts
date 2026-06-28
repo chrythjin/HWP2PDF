@@ -17,6 +17,8 @@
 
 import { config } from "../config.js";
 import { redactToken } from "../utils/access-token.js";
+import type { App, Credential, ServiceAccount } from "firebase-admin/app";
+import type { Auth } from "firebase-admin/auth";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,8 +58,8 @@ export function setTokenVerifierForTesting(verifier: TokenVerifier | null): void
 // Firebase Admin initialization (lazy singleton)
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let firebaseApp: { auth: () => { verifyIdToken: TokenVerifier } } | any = null;
+let firebaseApp: App | null = null;
+let firebaseAuth: Auth | null = null;
 let initAttempted = false;
 
 /**
@@ -67,12 +69,14 @@ let initAttempted = false;
  * - Service-account mode: loads the key from FIREBASE_PRIVATE_KEY_PATH or
  *   from GOOGLE_APPLICATION_CREDENTIALS_JSON (inline JSON string).
  */
-function resolveCredential(): unknown {
+async function resolveCredential(): Promise<Credential | undefined> {
   if (config.firebaseAdminMode === "adc") {
     return undefined;
   }
 
   if (config.firebaseAdminMode === "service-account") {
+    const { cert } = await import("firebase-admin/app");
+
     // Priority: file path > inline JSON env var.
     if (config.firebasePrivateKeyPath) {
       try {
@@ -80,9 +84,7 @@ function resolveCredential(): unknown {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const fs = require("node:fs");
         const key = JSON.parse(fs.readFileSync(config.firebasePrivateKeyPath, "utf8"));
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const admin = require("firebase-admin");
-        return admin.credential.cert(key);
+        return cert(key as ServiceAccount);
       } catch {
         // If the key file is missing/invalid, fall back to inline JSON or ADC.
       }
@@ -96,9 +98,7 @@ function resolveCredential(): unknown {
           ? raw
           : Buffer.from(raw, "base64").toString("utf8");
         const key = JSON.parse(jsonStr);
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const admin = require("firebase-admin");
-        return admin.credential.cert(key);
+        return cert(key as ServiceAccount);
       } catch {
         // If the inline JSON is invalid, fall back to ADC.
       }
@@ -117,20 +117,22 @@ async function initializeFirebaseApp(): Promise<void> {
   initAttempted = true;
 
   try {
-    const admin = await import("firebase-admin");
-    const credential = resolveCredential();
+    const { initializeApp } = await import("firebase-admin/app");
+    const { getAuth } = await import("firebase-admin/auth");
+    const credential = await resolveCredential();
     if (credential) {
-      firebaseApp = admin.initializeApp({
-        credential: credential as never,
+      firebaseApp = initializeApp({
+        credential,
         projectId: config.firebaseProjectId || undefined,
         databaseURL: config.firebaseDatabaseUrl || undefined,
       });
     } else {
-      firebaseApp = admin.initializeApp({
+      firebaseApp = initializeApp({
         projectId: config.firebaseProjectId || undefined,
         databaseURL: config.firebaseDatabaseUrl || undefined,
       });
     }
+    firebaseAuth = getAuth(firebaseApp);
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown";
     console.error(
@@ -173,11 +175,12 @@ export async function getTokenVerifier(): Promise<TokenVerifier> {
 
   await initializeFirebaseApp();
 
-  if (!firebaseApp) {
+  if (!firebaseAuth) {
     throw new Error("Firebase Admin is not initialized");
   }
 
-  return firebaseApp.auth().verifyIdToken as TokenVerifier;
+  const auth = firebaseAuth;
+  return async (idToken: string) => auth.verifyIdToken(idToken);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,5 +244,6 @@ export function buildMockIdToken(payload: DecodedFirebaseToken): string {
  */
 export function resetFirebaseAdminForTesting(): void {
   firebaseApp = null;
+  firebaseAuth = null;
   initAttempted = false;
 }

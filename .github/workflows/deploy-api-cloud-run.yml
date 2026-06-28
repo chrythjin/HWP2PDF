@@ -28,6 +28,7 @@ env:
   CLOUD_TASKS_QUEUE_NAME: ${{ vars.CLOUD_TASKS_QUEUE_NAME || 'conversion-queue' }}
   CLOUD_TASKS_LOCATION: ${{ vars.CLOUD_TASKS_LOCATION || vars.GCP_REGION || 'asia-northeast3' }}
   CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL: ${{ secrets.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL || secrets.GCP_SERVICE_ACCOUNT_EMAIL || vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}
+  CLOUD_RUN_MAX_INSTANCES: ${{ vars.CLOUD_RUN_MAX_INSTANCES || '1' }}
   # Firestore collections for job and board persistence.
   FIRESTORE_JOBS_COLLECTION: ${{ vars.FIRESTORE_JOBS_COLLECTION || 'jobs' }}
   FIRESTORE_BOARD_POSTS_COLLECTION: ${{ vars.FIRESTORE_BOARD_POSTS_COLLECTION || 'boardPosts' }}
@@ -109,7 +110,7 @@ jobs:
             --concurrency 1 \
             --timeout 300 \
             --min-instances 0 \
-            --max-instances 10 \
+            --max-instances "${CLOUD_RUN_MAX_INSTANCES}" \
             --service-account "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL || secrets.CLOUD_RUN_API_SERVICE_ACCOUNT || vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}" \
             --set-env-vars NODE_ENV=production \
             --set-env-vars CORS_ORIGIN="${{ secrets.WEB_ORIGIN || vars.WEB_ORIGIN }}" \

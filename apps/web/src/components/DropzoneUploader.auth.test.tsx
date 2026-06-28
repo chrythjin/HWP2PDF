@@ -25,6 +25,7 @@ vi.mock("@/lib/firebase", () => ({
   auth: {},
   getFirebaseAuth: vi.fn(() => ({})),
   firebaseConfig: {},
+  isFirebaseConfigured: true,
 }));
 
 let mockAuthUser: User | null = null;
