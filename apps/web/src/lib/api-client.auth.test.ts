@@ -2,16 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { User } from "firebase/auth";
 import { fetchWithAuth, getIdTokenOrNull } from "./api-client";
 
-const firebaseMocks = vi.hoisted(() => ({
-  auth: {
-    currentUser: null as { getIdToken: ReturnType<typeof vi.fn> } | null,
-  },
-}));
-
-vi.mock("./firebase", () => ({
-  getFirebaseAuth: () => firebaseMocks.auth,
-}));
-
 describe("fetchWithAuth", () => {
   const originalFetch = globalThis.fetch;
 
@@ -25,18 +15,18 @@ describe("fetchWithAuth", () => {
   });
 
   it("adds Authorization bearer token for authenticated users", async () => {
-    firebaseMocks.auth.currentUser = {
+    const user = {
       getIdToken: vi.fn().mockResolvedValue("test-token"),
-    };
+    } as unknown as User;
 
-    await fetchWithAuth("/v1/jobs", {
+    await fetchWithAuth("/v1/jobs", user, {
       method: "GET",
       headers: {
         "X-Test": "yes",
       },
     });
 
-    expect(firebaseMocks.auth.currentUser.getIdToken).toHaveBeenCalledTimes(1);
+    expect(user.getIdToken).toHaveBeenCalledTimes(1);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
 
     const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -46,9 +36,7 @@ describe("fetchWithAuth", () => {
   });
 
   it("omits Authorization header for anonymous users", async () => {
-    firebaseMocks.auth.currentUser = null;
-
-    await fetchWithAuth("/v1/jobs", {
+    await fetchWithAuth("/v1/jobs", null, {
       method: "GET",
       headers: {
         "X-Test": "yes",

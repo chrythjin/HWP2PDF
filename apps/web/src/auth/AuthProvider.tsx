@@ -71,6 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       await signInWithEmailAndPassword(getFirebaseAuth(), email, password);
+      // Immediately set user state after successful sign-in to avoid race
+      // condition where onAuthStateChanged hasn't fired yet but the component
+      // already navigated away (e.g. router.push("/")).
+      setUser(getFirebaseAuth().currentUser);
     } catch (err) {
       const message = extractErrorMessage(err);
       setError(message);
