@@ -1,0 +1,5 @@
+## 2026-06-30 - Task 2 authenticated browser download helper
+
+- Existing web auth pattern is `apps/web/src/lib/api-client.ts` `fetchWithAuth(url, user, init)`, which merges caller headers and adds `Authorization: Bearer <idToken>` only when a Firebase user is supplied.
+- Anonymous job access token storage remains in `apps/web/src/lib/upload-token.ts`; download helpers must pass it via the shared `ANONYMOUS_ACCESS_TOKEN_HEADER` value and never append it to URLs.
+- Protected browser downloads need fetch + Blob/Object URL rather than headerless anchors because the API download route requires either `Authorization` or `X-Job-Access-Token`.

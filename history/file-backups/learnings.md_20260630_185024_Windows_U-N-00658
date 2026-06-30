@@ -1,0 +1,33 @@
+## 2026-06-30 - Task 2 authenticated browser download helper
+
+- Existing web auth pattern is `apps/web/src/lib/api-client.ts` `fetchWithAuth(url, user, init)`, which merges caller headers and adds `Authorization: Bearer <idToken>` only when a Firebase user is supplied.
+- Anonymous job access token storage remains in `apps/web/src/lib/upload-token.ts`; download helpers must pass it via the shared `ANONYMOUS_ACCESS_TOKEN_HEADER` value and never append it to URLs.
+- Protected browser downloads need fetch + Blob/Object URL rather than headerless anchors because the API download route requires either `Authorization` or `X-Job-Access-Token`.
+
+## 2026-06-30 - Task 5 worker queued claim CAS
+
+- Worker duplicate Cloud Tasks delivery safety belongs in `JobStore.claimQueuedJobForProcessing`, not route-only pre-checks; route should convert only after a `claimed` result.
+- Memory claim tests need a re-check hook to prove queued observation can lose the lock before mutation; production callers do not pass this hook.
+- Firestore claim tests can prove transaction usage with a mocked `runTransaction` callback and write count when emulator access is unavailable.
+
+## 2026-06-30 - Task 1 AuthProvider lint-safe loading initialization
+
+- The `react-hooks/set-state-in-effect` lint rule catches synchronous `setState` calls both in the main effect body and inside `catch` blocks within the effect.
+- Smallest safe fix: initialize `loading` from `isFirebaseConfigured` so the unconfigured path never needs a synchronous `setLoading(false)` in the effect, and defer the listener-init-error `setLoading(false)` with `queueMicrotask`.
+- Mocking a module-level boolean for test permutations requires a getter in `vi.mock` so `beforeEach` mutations are visible at render time (mock factories are evaluated once, but getters read the hoisted mutable object on each access).
+- `agent-lsp` TypeScript initialization still fails on this Windows path; `pnpm --filter web typecheck` plus full `pnpm --filter web lint` serve as the fallback verification surface.
+
+## 2026-06-30 - Task 4 member history authenticated downloads
+
+- History download integration pattern: `HistoryPage` owns the Firebase `user` and calls `downloadProtectedFile` (T2 helper); `JobHistoryList` receives `onDownload(job)`, `downloadingJobId`, and `downloadError` as props — the component never touches `user` or `fetch` directly.
+- The `downloadUrl` field from `/v1/me/jobs` is a full URL in local mode (`http://localhost:8080/v1/jobs/{jobId}/download`); `fetchWithAuth` detects the `http` prefix and uses it as-is, so the T2 helper sends the exact URL with the Bearer header.
+- Replacing `<a href>` with a `<button onClick>` requires test updates: test IDs change from `download-link-*` to `download-button-*`, and Blob/URL.createObjectURL/anchor-click mocks are needed in the page test for the T2 helper's browser-download path.
+- Testing in-flight disabled state for delete/download requires a controllable promise (deferred resolution) rather than `setTimeout` delays — the stale element reference after row removal causes `toBeDisabled()` assertions to fail on the old DOM node.
+
+## 2026-06-30 - Task 3 DropzoneUploader authenticated downloads
+
+- Completed-state downloads in `DropzoneUploader` now use a `<button onClick={handleDownload}>` calling `downloadProtectedFile` from `@/lib/download-file` instead of a headerless `<a href download>`.
+- Integration pattern: component loads the anonymous token from sessionStorage via `loadJobAccessToken(jobId)` (not from upload response state), passes `user` (Firebase) or `anonymousJobToken` to the helper, and the helper sets `Authorization` or `X-Job-Access-Token` respectively.
+- Download failure (401/403/non-OK) must NOT clear the anonymous token — only `handleReset` clears it, so transient failures allow retry.
+- Missing anonymous token short-circuits before calling the helper with a deterministic safe message.
+- Testing the completed-state download flow requires mocking `fetchWithAuth` (initiate/complete/poll), `XMLHttpRequest` (GCS PUT — must be a constructor function, not `vi.fn(() => obj)`), and `downloadProtectedFile` (to assert call args without exercising Blob plumbing).
