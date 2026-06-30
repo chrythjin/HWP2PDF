@@ -19,8 +19,10 @@ import {
 } from "@hwp2pdf/shared";
 import { useAuth } from "@/auth/useAuth";
 import { fetchWithAuth, buildApiUrl } from "@/lib/api-client";
+import { downloadProtectedFile } from "@/lib/download-file";
 import {
   clearJobAccessToken,
+  loadJobAccessToken,
   saveJobAccessToken,
 } from "@/lib/upload-token";
 
@@ -58,6 +60,8 @@ export default function DropzoneUploader() {
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
   const uploadSessionRef = useRef(0);
 
   const handleReset = useCallback(() => {
@@ -70,7 +74,48 @@ export default function DropzoneUploader() {
     setProgress(0);
     setErrorMessage(null);
     setJobId(null);
+    setIsDownloading(false);
+    setDownloadErrorMessage(null);
   }, [jobId]);
+
+  // Download the converted PDF through the authenticated fetch helper so
+  // Firebase bearer tokens and anonymous job tokens are sent as headers
+  // and never leak into hrefs, query strings, or logs.
+  const handleDownload = useCallback(async () => {
+    if (!jobId || isDownloading) return;
+
+    setIsDownloading(true);
+    setDownloadErrorMessage(null);
+
+    // For anonymous jobs, load the persisted same-job token from
+    // sessionStorage. We do NOT clear it here on failure so a transient 401
+    // or network blip does not lock the user out of retrying.
+    const anonymousToken = user ? null : loadJobAccessToken(jobId);
+
+    if (!user && !anonymousToken) {
+      setIsDownloading(false);
+      setDownloadErrorMessage("다운로드 토큰이 없습니다. 페이지를 새로고침한 경우 변환을 다시 시도해 주세요.");
+      return;
+    }
+
+    const downloadUrl = `${API_ROUTES.JOBS}/${jobId}/download`;
+    const filename = file?.name.replace(/\.hwp$/i, ".pdf") ?? `${jobId}.pdf`;
+
+    try {
+      await downloadProtectedFile({
+        url: downloadUrl,
+        user,
+        anonymousJobToken: anonymousToken,
+        filename,
+      });
+    } catch (error) {
+      setDownloadErrorMessage(
+        error instanceof Error ? error.message : "PDF 다운로드에 실패했습니다.",
+      );
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [file, isDownloading, jobId, user]);
 
   const pollJobStatus = useCallback(
     async (currentJobId: string, currentToken: string | null, startedAt: number, uploadSession: number) => {
@@ -357,15 +402,6 @@ export default function DropzoneUploader() {
     disabled: isActiveStatus(status),
   });
 
-  // Build the download URL. For anonymous jobs, we use the protected
-  // download endpoint with the token sent as a header (never in the URL).
-  // For logged-in users, fetchWithAuth handles Authorization.
-  // The download link points to the protected endpoint; the browser will
-  // follow the 302 redirect to the short-lived signed URL.
-  const downloadHref = jobId
-    ? buildApiUrl(`${API_ROUTES.JOBS}/${jobId}/download`)
-    : "#";
-
   return (
     <div className="w-full max-w-xl mx-auto">
       {status === "idle" && (
@@ -480,16 +516,17 @@ export default function DropzoneUploader() {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
-            <a
-              href={downloadHref}
-              download
-              className="flex items-center justify-center space-x-2 px-6 py-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg hover:shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="flex items-center justify-center space-x-2 px-6 py-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg hover:shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
-              <span>PDF 다운로드</span>
-            </a>
+              <span>{isDownloading ? "다운로드 중..." : "PDF 다운로드"}</span>
+            </button>
 
             <button
               onClick={handleReset}
@@ -498,6 +535,12 @@ export default function DropzoneUploader() {
               다른 파일 변환
             </button>
           </div>
+
+          {downloadErrorMessage && (
+            <p className="text-sm text-rose-500 font-medium" role="alert">
+              {downloadErrorMessage}
+            </p>
+          )}
 
           <p className="text-[11px] text-zinc-400 dark:text-zinc-600">
             * 다운로드 링크는 보안을 위해 짧은 시간 동안만 유효하며, 변환 파일은 자동 삭제됩니다.

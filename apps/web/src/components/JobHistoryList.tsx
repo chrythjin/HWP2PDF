@@ -3,8 +3,10 @@
 // ---------------------------------------------------------------------------
 // JobHistoryList — renders the authenticated user's conversion jobs.
 //
-// Each row shows jobId, status, createdAt, and either a download link
+// Each row shows jobId, status, createdAt, and either a download button
 // (when completed and download not expired) or an "expired" label.
+// Download is performed via the onDownload callback so the Firebase user
+// stays in the page boundary and the T2 download helper handles auth.
 // A delete button with confirmation triggers the onDelete callback.
 // ---------------------------------------------------------------------------
 
@@ -14,6 +16,12 @@ interface JobHistoryListProps {
   jobs: JobStatusResponse[];
   onDelete: (jobId: string) => void;
   deletingJobId: string | null;
+  /** Authenticated download handler; page boundary owns the Firebase user. */
+  onDownload: (job: JobStatusResponse) => void;
+  /** jobId of the row currently downloading, or null. */
+  downloadingJobId: string | null;
+  /** Per-job download error for safe deterministic UI display. */
+  downloadError: { jobId: string; message: string } | null;
 }
 
 function isDownloadExpired(job: JobStatusResponse): boolean {
@@ -50,7 +58,14 @@ const STATUS_LABELS: Record<string, string> = {
   deleted: "삭제됨",
 };
 
-export default function JobHistoryList({ jobs, onDelete, deletingJobId }: JobHistoryListProps) {
+export default function JobHistoryList({
+  jobs,
+  onDelete,
+  deletingJobId,
+  onDownload,
+  downloadingJobId,
+  downloadError,
+}: JobHistoryListProps) {
   if (jobs.length === 0) {
     return (
       <div className="text-center py-16 text-zinc-500 dark:text-zinc-400" data-testid="history-empty">
@@ -65,6 +80,8 @@ export default function JobHistoryList({ jobs, onDelete, deletingJobId }: JobHis
         const expired = isDownloadExpired(job);
         const canDownload = job.status === "completed" && !expired;
         const isDeleting = deletingJobId === job.jobId;
+        const isDownloading = downloadingJobId === job.jobId;
+        const hasDownloadError = downloadError?.jobId === job.jobId;
 
         return (
           <li
@@ -87,17 +104,28 @@ export default function JobHistoryList({ jobs, onDelete, deletingJobId }: JobHis
               <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
                 {formatDate(job.createdAt)}
               </div>
+              {hasDownloadError && downloadError && (
+                <div
+                  className="mt-1 text-xs text-rose-600 dark:text-rose-400"
+                  data-testid={`download-error-${job.jobId}`}
+                  role="alert"
+                >
+                  {downloadError.message}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
               {canDownload ? (
-                <a
-                  href={job.downloadUrl ?? "#"}
-                  className="px-4 py-2 text-sm font-medium rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-sm hover:shadow-md transition-shadow"
-                  data-testid={`download-link-${job.jobId}`}
+                <button
+                  type="button"
+                  onClick={() => onDownload(job)}
+                  disabled={isDownloading}
+                  className="px-4 py-2 text-sm font-medium rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-sm hover:shadow-md transition-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                  data-testid={`download-button-${job.jobId}`}
                 >
-                  다운로드
-                </a>
+                  {isDownloading ? "다운로드 중..." : "다운로드"}
+                </button>
               ) : (
                 <span
                   className="text-sm text-zinc-400 dark:text-zinc-600"

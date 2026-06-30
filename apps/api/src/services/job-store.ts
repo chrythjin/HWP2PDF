@@ -50,6 +50,17 @@ export interface JobRecord {
 
 export type CreateJobInput = Omit<JobRecord, "createdAt" | "updatedAt">;
 export type UpdateJobPatch = Partial<Omit<JobRecord, "jobId" | "createdAt">>;
+export type ClaimQueuedJobResult =
+  | { status: "claimed"; job: JobRecord }
+  | { status: "not_found" }
+  | { status: "deleted"; current: JobRecord }
+  | { status: "expired"; current: JobRecord }
+  | { status: "already_processing"; current: JobRecord }
+  | { status: "terminal"; current: JobRecord }
+  | { status: "lock_lost"; current: JobRecord };
+type ClaimMutationHook = () => void | Promise<void>;
+export const JOB_PROCESSING_PROGRESS = 70;
+export const JOB_PROCESSING_MESSAGE = "변환 작업을 처리하고 있습니다.";
 
 // ---------------------------------------------------------------------------
 // UploadSession record (server-side, stored in a sibling collection/map)
@@ -100,6 +111,25 @@ function isTombstonePurged(job: JobRecord): boolean {
   return Date.parse(job.tombstoneUntil) <= Date.now();
 }
 
+function classifyUnclaimableJob(job: JobRecord): Exclude<ClaimQueuedJobResult, { status: "claimed" } | { status: "not_found" }> | null {
+  if (isDeleted(job)) return { status: "deleted", current: job };
+  if (job.status === "expired" || isExpired(job)) return { status: "expired", current: job };
+  if (job.status === "processing") return { status: "already_processing", current: job };
+  if (job.status === "completed" || job.status === "failed") return { status: "terminal", current: job };
+  if (job.status !== "queued") return { status: "lock_lost", current: job };
+  return null;
+}
+
+function toProcessingJob(job: JobRecord): JobRecord {
+  return {
+    ...job,
+    status: "processing",
+    progress: JOB_PROCESSING_PROGRESS,
+    message: JOB_PROCESSING_MESSAGE,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // JobStore interface
 // ---------------------------------------------------------------------------
@@ -118,6 +148,7 @@ interface JobStore {
   createJob(input: CreateJobInput): Promise<JobRecord>;
   getJob(jobId: string): Promise<JobRecord | undefined>;
   updateJob(jobId: string, patch: UpdateJobPatch): Promise<JobRecord | undefined>;
+  claimQueuedJobForProcessing(jobId: string, beforeCommit?: ClaimMutationHook): Promise<ClaimQueuedJobResult>;
 
   // --- Owner-aware lookups ---
   getJobForUser(jobId: string, userId: string): Promise<JobRecord | null>;
@@ -183,6 +214,27 @@ export class MemoryJobStore implements JobStore {
 
     this.jobs.set(jobId, updated);
     return updated;
+  }
+
+  async claimQueuedJobForProcessing(jobId: string, beforeCommit?: ClaimMutationHook) {
+    const observed = this.jobs.get(jobId);
+    if (!observed) return { status: "not_found" } as const;
+
+    const unclaimable = classifyUnclaimableJob(observed);
+    if (unclaimable) return unclaimable;
+
+    await beforeCommit?.();
+
+    const current = this.jobs.get(jobId);
+    if (!current) return { status: "not_found" } as const;
+
+    if (current.status !== "queued" || isDeleted(current) || isExpired(current)) {
+      return { status: "lock_lost", current } as const;
+    }
+
+    const claimed = toProcessingJob(current);
+    this.jobs.set(jobId, claimed);
+    return { status: "claimed", job: claimed } as const;
   }
 
   async getJobForUser(jobId: string, userId: string) {
@@ -309,17 +361,23 @@ export class MemoryJobStore implements JobStore {
 // FirestoreJobStore
 // ---------------------------------------------------------------------------
 
-class FirestoreJobStore implements JobStore {
-  private readonly firestore = new Firestore({
-    projectId: config.firestoreProjectId || undefined,
-    databaseId: config.firestoreDatabaseId,
-    ignoreUndefinedProperties: true,
-  });
+export class FirestoreJobStore implements JobStore {
+  private readonly firestore: Firestore;
 
-  private readonly collection = this.firestore.collection(config.firestoreJobsCollection);
-  private readonly sessionsCollection = this.firestore.collection(
-    process.env.FIRESTORE_UPLOAD_SESSIONS_COLLECTION ?? "uploadSessions",
-  );
+  private readonly collection;
+  private readonly sessionsCollection;
+
+  constructor(firestore?: Firestore) {
+    this.firestore = firestore ?? new Firestore({
+      projectId: config.firestoreProjectId || undefined,
+      databaseId: config.firestoreDatabaseId,
+      ignoreUndefinedProperties: true,
+    });
+    this.collection = this.firestore.collection(config.firestoreJobsCollection);
+    this.sessionsCollection = this.firestore.collection(
+      process.env.FIRESTORE_UPLOAD_SESSIONS_COLLECTION ?? "uploadSessions",
+    );
+  }
 
   async createJob(input: CreateJobInput) {
     const now = new Date().toISOString();
@@ -370,6 +428,25 @@ class FirestoreJobStore implements JobStore {
 
     await ref.set(updated);
     return updated;
+  }
+
+  async claimQueuedJobForProcessing(jobId: string, beforeCommit?: ClaimMutationHook) {
+    const ref = this.collection.doc(jobId);
+
+    return this.firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return { status: "not_found" } as const;
+
+      const current = snapshot.data() as JobRecord;
+      const unclaimable = classifyUnclaimableJob(current);
+      if (unclaimable) return unclaimable;
+
+      await beforeCommit?.();
+
+      const claimed = toProcessingJob(current);
+      transaction.set(ref, claimed);
+      return { status: "claimed", job: claimed } as const;
+    });
   }
 
   async getJobForUser(jobId: string, userId: string) {
@@ -532,6 +609,10 @@ export function getJob(jobId: string) {
 
 export function updateJob(jobId: string, patch: UpdateJobPatch) {
   return selectedStore.updateJob(jobId, patch);
+}
+
+export function claimQueuedJobForProcessing(jobId: string, beforeCommit?: ClaimMutationHook) {
+  return selectedStore.claimQueuedJobForProcessing(jobId, beforeCommit);
 }
 
 export function getJobForUser(jobId: string, userId: string) {

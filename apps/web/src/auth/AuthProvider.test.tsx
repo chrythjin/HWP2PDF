@@ -1,4 +1,4 @@
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { User } from "firebase/auth";
 import { AuthProvider, type AuthContextValue } from "./AuthProvider";
@@ -49,6 +49,24 @@ vi.mock("firebase/app", () => ({
   getApp: vi.fn(() => ({})),
 }));
 
+const firebaseConfigMocks = vi.hoisted(() => ({
+  isFirebaseConfigured: true,
+  getFirebaseAuthError: null as Error | null,
+}));
+
+vi.mock("@/lib/firebase", () => ({
+  get isFirebaseConfigured() {
+    return firebaseConfigMocks.isFirebaseConfigured;
+  },
+  getFirebaseAuth: vi.fn(() => {
+    if (firebaseConfigMocks.getFirebaseAuthError) {
+      throw firebaseConfigMocks.getFirebaseAuthError;
+    }
+    return {};
+  }),
+  _resetFirebaseAuthCache: vi.fn(),
+}));
+
 // Helper to consume auth context for assertions
 function AuthConsumer({ onValue }: { onValue: (v: AuthContextValue) => void }) {
   const value = useAuth();
@@ -60,6 +78,8 @@ describe("AuthProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMocks.state.callback = null;
+    firebaseConfigMocks.isFirebaseConfigured = true;
+    firebaseConfigMocks.getFirebaseAuthError = null;
   });
 
   afterEach(() => {
@@ -186,6 +206,42 @@ describe("AuthProvider", () => {
     });
 
     expect(captured.error).toBe("이메일 또는 비밀번호가 올바르지 않습니다.");
+  });
+
+  it("resolves loading to false when Firebase is not configured", () => {
+    firebaseConfigMocks.isFirebaseConfigured = false;
+
+    let captured: AuthContextValue = null as unknown as AuthContextValue;
+
+    render(
+      <AuthProvider>
+        <AuthConsumer onValue={(v) => (captured = v)} />
+      </AuthProvider>,
+    );
+
+    expect(captured.loading).toBe(false);
+    expect(captured.user).toBeNull();
+    expect(authMocks.onAuthStateChanged).not.toHaveBeenCalled();
+  });
+
+  it("sets loading false when Firebase listener initialization throws", async () => {
+    const initError = new Error("Firebase auth listener failed to initialize");
+    firebaseConfigMocks.getFirebaseAuthError = initError;
+
+    let captured: AuthContextValue = null as unknown as AuthContextValue;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <AuthProvider>
+        <AuthConsumer onValue={(v) => (captured = v)} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(captured.loading).toBe(false));
+    expect(captured.user).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith("Failed to initialize Firebase Auth listener:", initError);
+
+    errorSpy.mockRestore();
   });
 
   it("useAuth throws when used outside AuthProvider", () => {

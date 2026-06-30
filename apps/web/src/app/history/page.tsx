@@ -6,6 +6,8 @@
 // Requires login: if not logged in, shows a login CTA linking to /login.
 // Fetches /v1/me/jobs on mount and when user changes.
 // Distinguishes active download vs expired download.
+// Downloads use the T2 authenticated download helper (fetch + Blob) so the
+// Firebase bearer token stays in the Authorization header, never in the URL.
 // Delete with confirmation; removes row from local state on success.
 // Handles 401/403 by showing an auth-error message with a login link.
 // ---------------------------------------------------------------------------
@@ -16,6 +18,7 @@ import PageLayout from "@/components/PageLayout";
 import JobHistoryList from "@/components/JobHistoryList";
 import { useAuth } from "@/auth/useAuth";
 import { fetchWithAuth } from "@/lib/api-client";
+import { downloadProtectedFile } from "@/lib/download-file";
 import { API_ROUTES, type JobStatusResponse } from "@hwp2pdf/shared";
 
 export default function HistoryPage() {
@@ -24,6 +27,8 @@ export default function HistoryPage() {
   const [fetching, setFetching] = useState(false);
   const [authError, setAuthError] = useState(false);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<{ jobId: string; message: string } | null>(null);
 
   const loadJobs = useCallback(async () => {
     if (!user) return;
@@ -54,6 +59,29 @@ export default function HistoryPage() {
       void loadJobs();
     });
   }, [loadJobs]);
+
+  const handleDownload = useCallback(
+    async (job: JobStatusResponse) => {
+      if (!user || !job.downloadUrl) return;
+
+      setDownloadingJobId(job.jobId);
+      setDownloadError(null);
+      try {
+        await downloadProtectedFile({
+          url: job.downloadUrl,
+          user,
+          filename: `${job.jobId}.pdf`,
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "PDF 다운로드에 실패했습니다.";
+        setDownloadError({ jobId: job.jobId, message });
+      } finally {
+        setDownloadingJobId(null);
+      }
+    },
+    [user],
+  );
 
   const handleDelete = useCallback(
     async (jobId: string) => {
@@ -158,7 +186,14 @@ export default function HistoryPage() {
             불러오는 중...
           </div>
         ) : (
-          <JobHistoryList jobs={jobs} onDelete={handleDelete} deletingJobId={deletingJobId} />
+          <JobHistoryList
+            jobs={jobs}
+            onDelete={handleDelete}
+            deletingJobId={deletingJobId}
+            onDownload={handleDownload}
+            downloadingJobId={downloadingJobId}
+            downloadError={downloadError}
+          />
         )}
       </div>
     </PageLayout>

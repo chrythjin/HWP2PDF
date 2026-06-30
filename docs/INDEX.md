@@ -73,3 +73,6 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260629_012412_fix-firebase-admin-auth.md` - fixed API Firebase Admin SDK v14 initialization/token verification so real Firebase ID tokens authenticate board API requests locally.
 - `sessions/20260629_014200_low-cost-cloud-run-test-settings.md` - tuned live Cloud Run and Cloud Tasks limits for low-cost testing and documented matching deployment defaults.
 - `sessions/20260629_112241_fix-post-login-auth-race-condition.md` - fixed post-login authentication race condition: immediate setUser after signInWithEmailAndPassword, simplified fetchWithAuth by removing getFirebaseAuth fallback.
+- `sessions/20260630_180000_worker-queued-claim-cas.md` - added worker queued-job compare-and-set claim semantics across Memory and Firestore job stores to prevent duplicate conversion on concurrent Cloud Tasks delivery.
+- `sessions/20260630_182254_authprovider-lint-safe-loading.md` - fixed `react-hooks/set-state-in-effect` lint failure in `apps/web/src/auth/AuthProvider.tsx` while preserving auth context shape and login/signup/logout behavior.
+- `sessions/20260630_185024_hwp2pdf-review-fixes.md` - consolidated final verification evidence for authenticated downloads, AuthProvider lint safety, and worker queued-claim review fixes.

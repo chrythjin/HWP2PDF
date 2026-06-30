@@ -21,6 +21,7 @@ import { ApiError } from "../utils/api-error.js";
 import { config } from "../config.js";
 import { boardRouter } from "./v1.board.js";
 import {
+  claimQueuedJobForProcessing,
   completeUploadSession,
   createJob,
   createUploadSession,
@@ -30,6 +31,7 @@ import {
   listJobsByUser,
   markJobDeleted,
   updateJob,
+  type ClaimQueuedJobResult,
   type JobRecord,
 } from "../services/job-store.js";
 import { convertJobToPdf } from "../services/conversion-service.js";
@@ -87,6 +89,23 @@ function buildOwnerVerifier(job: JobRecord) {
     userId: owner.userId,
     accessTokenHash: owner.accessTokenHash,
   });
+}
+
+function getWorkerNoopReason(result: Exclude<ClaimQueuedJobResult, { status: "claimed" }>): string {
+  switch (result.status) {
+    case "not_found":
+      return "job_not_found";
+    case "deleted":
+      return "job_deleted";
+    case "expired":
+      return "job_expired";
+    case "already_processing":
+      return "job_already_processing";
+    case "terminal":
+      return `job_${result.current.status}`;
+    case "lock_lost":
+      return `job_lock_lost_${result.current.status}`;
+  }
 }
 
 function buildOwnerCredentials(request: {
@@ -576,56 +595,13 @@ router.post("/internal/workers/convert", requireWorkerOidc, async (request, resp
       return;
     }
 
-    const job = await getJob(body.jobId);
-
-    // Idempotent no-op: job not found (may have been purged).
-    if (!job) {
-      response.status(200).json({ ok: true, noop: true, reason: "job_not_found" });
+    const claim = await claimQueuedJobForProcessing(body.jobId);
+    if (claim.status !== "claimed") {
+      response.status(200).json({ ok: true, noop: true, reason: getWorkerNoopReason(claim) });
       return;
     }
 
-    // Idempotent no-op: job is deleted/tombstoned. Do not resurrect.
-    if (job.status === "deleted" || job.deletedAt) {
-      response.status(200).json({ ok: true, noop: true, reason: "job_deleted" });
-      return;
-    }
-
-    // Idempotent no-op: job is expired.
-    if (job.status === "expired") {
-      response.status(200).json({ ok: true, noop: true, reason: "job_expired" });
-      return;
-    }
-
-    // Idempotent no-op: job already completed or failed.
-    // Duplicate Cloud Tasks delivery should not re-convert.
-    if (job.status === "completed" || job.status === "failed") {
-      response.status(200).json({ ok: true, noop: true, reason: `job_${job.status}` });
-      return;
-    }
-
-    // Idempotent no-op: job is already being processed by another worker
-    // invocation. This prevents double-conversion on duplicate delivery.
-    if (job.status === "processing") {
-      response.status(200).json({ ok: true, noop: true, reason: "job_already_processing" });
-      return;
-    }
-
-    // Only process jobs in "queued" status.
-    if (job.status !== "queued") {
-      response.status(200).json({ ok: true, noop: true, reason: `job_${job.status}` });
-      return;
-    }
-
-    // Optimistic lock: transition queued -> processing before conversion.
-    // The current JobStore API does not expose a conditional compare-and-set;
-    // the pre-check above plus this early status write provides the MVP lock
-    // boundary for duplicate Cloud Tasks deliveries. A future Firestore
-    // transaction should enforce status === "queued" at write time.
-    await updateJob(job.jobId, {
-      status: "processing",
-      progress: PROGRESS.PROCESSING_START,
-      message: "변환 작업을 처리하고 있습니다.",
-    });
+    const job = claim.job;
 
     // Run the conversion. The conversion service handles:
     //   - Setting status to "processing" at start.

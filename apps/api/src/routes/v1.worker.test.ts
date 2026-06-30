@@ -7,6 +7,7 @@ import type { Express } from "express";
 import { createApp } from "../app.js";
 import {
   createJob,
+  getJob,
   type JobRecord,
   type CreateJobInput,
 } from "../services/job-store.js";
@@ -198,6 +199,90 @@ describe("worker endpoint POST /internal/workers/convert (Todo 6)", () => {
         jobId: "worker-process-001",
         sourcePath: "/tmp/uploads/test.hwp",
       });
+    });
+
+    it("claims concurrent duplicate queued worker deliveries exactly once", async () => {
+      const job = makeJob({ jobId: "worker-race-001" });
+      await createJob(job as CreateJobInput);
+
+      let releaseConversion: (() => void) | undefined;
+      convertJobToPdfMock.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          releaseConversion = resolve;
+        }),
+      );
+
+      const token = buildMockOidcToken({
+        aud: getExpectedAudience(),
+        iss: "https://accounts.google.com",
+        email: "worker@project.iam.gserviceaccount.com",
+      });
+
+      const firstRequest = request(app)
+        .post("/internal/workers/convert")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ jobId: "worker-race-001" })
+        .then((res) => res);
+      const secondRequest = request(app)
+        .post("/internal/workers/convert")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ jobId: "worker-race-001" })
+        .then((res) => res);
+
+      await vi.waitFor(() => {
+        expect(convertJobToPdfMock).toHaveBeenCalledTimes(1);
+      });
+      releaseConversion?.();
+
+      const [firstResponse, secondResponse] = await Promise.all([firstRequest, secondRequest]);
+      const responses = [firstResponse, secondResponse];
+
+      expect(responses.every((res) => res.status === 200)).toBe(true);
+      expect(convertJobToPdfMock).toHaveBeenCalledTimes(1);
+      expect(responses.filter((res) => res.body.ok === true && !res.body.noop)).toHaveLength(1);
+      expect(responses.filter((res) => res.body.noop === true)).toHaveLength(1);
+      expect(responses.map((res) => res.body.reason).filter(Boolean)).toEqual(
+        expect.arrayContaining([expect.stringMatching(/processing|lock_lost/)]),
+      );
+
+      const finalJob = await getJob("worker-race-001");
+      expect(finalJob?.status).toBe("processing");
+      expect(finalJob?.sourcePath).toBe("/tmp/uploads/test.hwp");
+    });
+
+    it("does not convert when queued claim loses the lock before mutation", async () => {
+      const job = makeJob({ jobId: "worker-lock-lost-001" });
+      await createJob(job as CreateJobInput);
+
+      convertJobToPdfMock.mockImplementationOnce(async () => undefined);
+      const token = buildMockOidcToken({
+        aud: getExpectedAudience(),
+        iss: "https://accounts.google.com",
+        email: "worker@project.iam.gserviceaccount.com",
+      });
+
+      await Promise.all([
+        request(app)
+          .post("/internal/workers/convert")
+          .set("Authorization", `Bearer ${token}`)
+          .send({ jobId: "worker-lock-lost-001" }),
+        request(app)
+          .post("/internal/workers/convert")
+          .set("Authorization", `Bearer ${token}`)
+          .send({ jobId: "worker-lock-lost-001" }),
+      ]);
+
+      convertJobToPdfMock.mockClear();
+
+      const res = await request(app)
+        .post("/internal/workers/convert")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ jobId: "worker-lock-lost-001" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.noop).toBe(true);
+      expect(res.body.reason).toMatch(/processing|lock_lost/);
+      expect(convertJobToPdfMock).not.toHaveBeenCalled();
     });
 
     it("no-ops when job is already completed (duplicate task)", async () => {

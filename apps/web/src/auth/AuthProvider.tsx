@@ -39,12 +39,15 @@ function extractErrorMessage(error: unknown): string {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Avoid a synchronous setState in the init effect for the unconfigured path:
+  // when Firebase is not configured we know auth is permanently unavailable,
+  // so loading resolves to false immediately. When configured, the listener
+  // callback is responsible for clearing loading.
+  const [loading, setLoading] = useState(isFirebaseConfigured);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isFirebaseConfigured) {
-      setLoading(false);
       return;
     }
 
@@ -59,7 +62,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     } catch (err) {
       console.error("Failed to initialize Firebase Auth listener:", err);
-      setLoading(false);
+      // Defer the state update so it does not happen synchronously inside the
+      // effect body, satisfying the hooks lint rule while still ensuring the
+      // provider does not get stuck in a permanent loading state.
+      queueMicrotask(() => setLoading(false));
     }
   }, []);
 

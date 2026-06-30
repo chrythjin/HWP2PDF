@@ -1,0 +1,443 @@
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { User } from "firebase/auth";
+import DropzoneUploader from "./DropzoneUploader";
+
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
+
+vi.mock("firebase/app", () => ({
+  initializeApp: vi.fn(() => ({})),
+  getApps: vi.fn(() => [{}]),
+  getApp: vi.fn(() => ({})),
+}));
+
+vi.mock("firebase/auth", () => ({
+  getAuth: vi.fn(() => ({})),
+  onAuthStateChanged: vi.fn(() => () => {}),
+  signInWithEmailAndPassword: vi.fn(),
+  createUserWithEmailAndPassword: vi.fn(),
+  signOut: vi.fn(),
+}));
+
+vi.mock("@/lib/firebase", () => ({
+  auth: {},
+  getFirebaseAuth: vi.fn(() => ({})),
+  firebaseConfig: {},
+  isFirebaseConfigured: true,
+}));
+
+let mockAuthUser: User | null = null;
+
+vi.mock("@/auth/useAuth", () => ({
+  useAuth: () => ({
+    user: mockAuthUser,
+    loading: false,
+    error: null,
+    login: vi.fn(),
+    signup: vi.fn(),
+    logout: vi.fn(),
+    clearError: vi.fn(),
+  }),
+}));
+
+const sessionStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => store[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      store[key] = value;
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete store[key];
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+  };
+})();
+
+Object.defineProperty(window, "sessionStorage", {
+  value: sessionStorageMock,
+  writable: true,
+});
+
+// Mock downloadProtectedFile so we can assert call args without exercising
+// the Blob/Object URL plumbing (covered by download-file.test.ts).
+const downloadProtectedFileMock = vi.fn();
+vi.mock("@/lib/download-file", () => ({
+  downloadProtectedFile: (...args: unknown[]) => downloadProtectedFileMock(...args),
+}));
+
+// Mock fetchWithAuth to drive the component through upload-initiate ->
+// upload-complete -> polling -> completed without real network calls.
+const fetchWithAuthMock = vi.fn();
+vi.mock("@/lib/api-client", () => ({
+  fetchWithAuth: (...args: unknown[]) => fetchWithAuthMock(...args),
+  buildApiUrl: (route: string) => `http://localhost:8080${route}`,
+}));
+
+// ---------------------------------------------------------------------------
+// XHR mock for the GCS signed-URL PUT in uploadToSignedUrl.
+// ---------------------------------------------------------------------------
+
+interface MockXHR {
+  status: number;
+  responseText: string;
+  upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null };
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+  open: (...args: unknown[]) => void;
+  send: (...args: unknown[]) => void;
+  setRequestHeader: (...args: unknown[]) => void;
+}
+
+function createMockXHR(): MockXHR {
+  const xhr: MockXHR = {
+    status: 200,
+    responseText: "",
+    upload: { onprogress: null },
+    onload: null,
+    onerror: null,
+    open: () => {},
+    send: function (this: MockXHR) {
+      // Defer to allow event handlers to attach.
+      Promise.resolve().then(() => {
+        if (this.onload) this.onload();
+      });
+    },
+    setRequestHeader: () => {},
+  };
+  return xhr;
+}
+
+// XMLHttpRequest must be a constructor (the component calls `new XMLHttpRequest()`).
+function MockXMLHttpRequest(this: MockXHR): MockXHR {
+  return mockXHRInstance;
+}
+
+let mockXHRInstance: MockXHR;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const TEST_ID_TOKEN = "test-id-token";
+const ANON_TOKEN = "anon-token-123";
+
+function makeMockUser(token = TEST_ID_TOKEN): User {
+  return {
+    uid: "test-uid",
+    email: "test@example.com",
+    getIdToken: vi.fn().mockResolvedValue(token),
+  } as unknown as User;
+}
+
+/**
+ * Drive the component to the "completed" state by simulating a drop and
+ * responding to the upload-initiate -> GCS PUT -> complete -> polling flow.
+ *
+ * The component first tries the direct-upload initiate route. We respond
+ * with a 200 + direct-upload payload so it takes the signed-URL path
+ * (which uses our mock XHR). Then the complete call returns the job +
+ * token, and the first poll returns status "completed".
+ */
+async function driveToCompleted(jobId: string, accessToken: string | null) {
+  // fetchWithAuth is called for: (1) initiate, (2) complete, (3) poll.
+  fetchWithAuthMock.mockImplementation(async (route: string) => {
+    if (typeof route === "string" && route.includes("/uploads/initiate")) {
+      return new Response(
+        JSON.stringify({
+          jobId,
+          uploadUrl: "https://storage.googleapis.com/bucket/upload",
+          headers: { "Content-Type": "application/octet-stream" },
+          objectPath: `uploads/${jobId}/file.hwp`,
+          accessToken: accessToken ?? undefined,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (typeof route === "string" && route.includes("/uploads/complete")) {
+      return new Response(
+        JSON.stringify({
+          jobId,
+          status: "queued",
+          accessToken: accessToken ?? undefined,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (typeof route === "string" && route.includes("/jobs/")) {
+      // Poll response.
+      return new Response(
+        JSON.stringify({
+          jobId,
+          status: "completed",
+          progress: 100,
+          downloadUrl: `http://localhost:8080/v1/jobs/${jobId}/download`,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response("{}", { status: 200 });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("DropzoneUploader completed-state download", () => {
+  let originalXHR: typeof globalThis.XMLHttpRequest;
+
+  beforeEach(() => {
+    mockAuthUser = null;
+    sessionStorageMock.clear();
+    vi.clearAllMocks();
+    downloadProtectedFileMock.mockResolvedValue(undefined);
+
+    originalXHR = globalThis.XMLHttpRequest;
+    mockXHRInstance = createMockXHR();
+    (globalThis as { XMLHttpRequest: unknown }).XMLHttpRequest = MockXMLHttpRequest;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.XMLHttpRequest = originalXHR;
+    mockAuthUser = null;
+    vi.restoreAllMocks();
+  });
+
+  it("anonymous completed job: click sends X-Job-Access-Token header via helper", async () => {
+    const jobId = "job-download-anon";
+    await driveToCompleted(jobId, ANON_TOKEN);
+
+    const { container } = render(<DropzoneUploader />);
+
+    // Drop a file to trigger the upload flow.
+    // react-dropzone attaches handlers to the root; we simulate by calling
+    // the onDrop callback through the input change is complex, so instead
+    // we use the hidden input's onChange by dropping a file.
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    // Wait for completed state to render.
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    // The anonymous token must be persisted in sessionStorage.
+    expect(sessionStorageMock.setItem).toHaveBeenCalledWith(
+      `hwp2pdf-job-${jobId}`,
+      ANON_TOKEN,
+    );
+
+    // Click the download button.
+    const downloadButton = screen.getByRole("button", { name: /PDF 다운로드/ });
+    await act(async () => {
+      fireEvent.click(downloadButton);
+    });
+
+    await waitFor(() => {
+      expect(downloadProtectedFileMock).toHaveBeenCalledTimes(1);
+    });
+
+    const callArg = downloadProtectedFileMock.mock.calls[0][0] as {
+      url: string;
+      user: unknown;
+      anonymousJobToken: string | null;
+      filename: string;
+    };
+
+    expect(callArg.url).toBe(`/v1/jobs/${jobId}/download`);
+    expect(callArg.url).not.toContain(ANON_TOKEN);
+    expect(callArg.url).not.toContain("accessToken");
+    expect(callArg.url).not.toContain("token=");
+    expect(callArg.user).toBeNull();
+    expect(callArg.anonymousJobToken).toBe(ANON_TOKEN);
+    expect(callArg.filename).toBe("test.pdf");
+  });
+
+  it("logged-in completed job: click sends Authorization Bearer via helper", async () => {
+    mockAuthUser = makeMockUser(TEST_ID_TOKEN);
+    const jobId = "job-download-auth";
+    await driveToCompleted(jobId, null);
+
+    const { container } = render(<DropzoneUploader />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    const downloadButton = screen.getByRole("button", { name: /PDF 다운로드/ });
+    await act(async () => {
+      fireEvent.click(downloadButton);
+    });
+
+    await waitFor(() => {
+      expect(downloadProtectedFileMock).toHaveBeenCalledTimes(1);
+    });
+
+    const callArg = downloadProtectedFileMock.mock.calls[0][0] as {
+      url: string;
+      user: { getIdToken: unknown };
+      anonymousJobToken: string | null;
+      filename: string;
+    };
+
+    expect(callArg.url).toBe(`/v1/jobs/${jobId}/download`);
+    expect(callArg.url).not.toContain("token=");
+    expect(callArg.user).toBe(mockAuthUser);
+    expect(callArg.anonymousJobToken).toBeNull();
+    expect(callArg.filename).toBe("test.pdf");
+  });
+
+  it("completed state does not render any anchor href containing token material", async () => {
+    const jobId = "job-download-leak";
+    await driveToCompleted(jobId, ANON_TOKEN);
+
+    const { container } = render(<DropzoneUploader />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    const anchors = document.querySelectorAll("a");
+    for (const anchor of anchors) {
+      const href = anchor.getAttribute("href") ?? "";
+      expect(href).not.toContain(ANON_TOKEN);
+      expect(href).not.toContain("accessToken");
+      expect(href).not.toContain("token=");
+    }
+  });
+
+  it("download failure (401) shows safe error and does not clear anonymous token", async () => {
+    const jobId = "job-download-fail";
+    await driveToCompleted(jobId, ANON_TOKEN);
+
+    downloadProtectedFileMock.mockRejectedValue(new Error("인증이 필요합니다."));
+
+    const { container } = render(<DropzoneUploader />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    const downloadButton = screen.getByRole("button", { name: /PDF 다운로드/ });
+    await act(async () => {
+      fireEvent.click(downloadButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("인증이 필요합니다.")).toBeInTheDocument();
+    });
+
+    // Token must NOT be cleared on download failure.
+    expect(sessionStorageMock.removeItem).not.toHaveBeenCalledWith(
+      `hwp2pdf-job-${jobId}`,
+    );
+  });
+
+  it("download failure (403) shows safe error and does not clear anonymous token", async () => {
+    const jobId = "job-download-fail-403";
+    await driveToCompleted(jobId, ANON_TOKEN);
+
+    downloadProtectedFileMock.mockRejectedValue(new Error("다운로드 권한이 없습니다."));
+
+    const { container } = render(<DropzoneUploader />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    const downloadButton = screen.getByRole("button", { name: /PDF 다운로드/ });
+    await act(async () => {
+      fireEvent.click(downloadButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("다운로드 권한이 없습니다.")).toBeInTheDocument();
+    });
+
+    expect(sessionStorageMock.removeItem).not.toHaveBeenCalledWith(
+      `hwp2pdf-job-${jobId}`,
+    );
+  });
+
+  it("missing anonymous token shows safe error without calling helper", async () => {
+    const jobId = "job-download-no-token";
+    // Drive to completed but with no token returned and none in storage.
+    await driveToCompleted(jobId, null);
+
+    const { container } = render(<DropzoneUploader />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    const downloadButton = screen.getByRole("button", { name: /PDF 다운로드/ });
+    await act(async () => {
+      fireEvent.click(downloadButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("다운로드 토큰이 없습니다. 페이지를 새로고침한 경우 변환을 다시 시도해 주세요.")).toBeInTheDocument();
+    });
+
+    expect(downloadProtectedFileMock).not.toHaveBeenCalled();
+  });
+});

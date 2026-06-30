@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
+  FirestoreJobStore,
   MemoryJobStore,
   isMetadataExpired,
   isDownloadExpired,
@@ -119,6 +120,84 @@ describe("MemoryJobStore owner-aware behavior", () => {
     const fetched = await store.getJob("legacy-1");
     expect(fetched).toBeDefined();
     expect(fetched?.downloadUrl).toBe("http://example.com/legacy.pdf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queued worker claim compare-and-set behavior
+// ---------------------------------------------------------------------------
+
+describe("worker queued claim compare-and-set", () => {
+  it("MemoryJobStore allows only one queued claim to succeed", async () => {
+    const store = new MemoryJobStore();
+    await store.createJob(baseUserJob({ jobId: "memory-claim-001", status: "queued", progress: 60 }));
+
+    const [first, second] = await Promise.all([
+      store.claimQueuedJobForProcessing("memory-claim-001"),
+      store.claimQueuedJobForProcessing("memory-claim-001"),
+    ]);
+
+    const results = [first.status, second.status];
+    expect(results).toContain("claimed");
+    expect(results).toContain("lock_lost");
+    expect(results.filter((status) => status === "claimed")).toHaveLength(1);
+
+    const claimed = first.status === "claimed" ? first.job : second.status === "claimed" ? second.job : undefined;
+    expect(claimed?.status).toBe("processing");
+    expect(claimed?.progress).toBe(70);
+  });
+
+  it("MemoryJobStore reports lock-lost when the queued job changes before mutation", async () => {
+    const store = new MemoryJobStore();
+    await store.createJob(baseUserJob({ jobId: "memory-lock-lost-001", status: "queued", progress: 60 }));
+
+    const result = await store.claimQueuedJobForProcessing("memory-lock-lost-001", async () => {
+      await store.updateJob("memory-lock-lost-001", { status: "processing", progress: 70 });
+    });
+
+    expect(result.status).toBe("lock_lost");
+    expect(result.current?.status).toBe("processing");
+  });
+
+  it("FirestoreJobStore uses a transaction so only one queued claim succeeds", async () => {
+    const job = baseUserJob({ jobId: "firestore-claim-001", status: "queued", progress: 60 });
+    const documentState: { current: JobRecord | undefined } = { current: job };
+    const writes: JobRecord[] = [];
+    const ref = { id: job.jobId };
+    const transaction = {
+      async get() {
+        return {
+          exists: documentState.current !== undefined,
+          data: () => documentState.current,
+        };
+      },
+      set(_ref: unknown, value: JobRecord) {
+        documentState.current = value;
+        writes.push(value);
+      },
+    };
+    const firestore = {
+      collection() {
+        return {
+          doc() {
+            return ref;
+          },
+        };
+      },
+      async runTransaction<T>(callback: (tx: typeof transaction) => Promise<T>) {
+        return callback(transaction);
+      },
+    };
+
+    const store = new FirestoreJobStore(firestore as never);
+
+    const first = await store.claimQueuedJobForProcessing("firestore-claim-001");
+    const second = await store.claimQueuedJobForProcessing("firestore-claim-001");
+
+    expect(first.status).toBe("claimed");
+    expect(second.status).toBe("already_processing");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].status).toBe("processing");
   });
 });
 
