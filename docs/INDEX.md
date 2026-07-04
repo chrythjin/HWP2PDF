@@ -76,3 +76,5 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260630_180000_worker-queued-claim-cas.md` - added worker queued-job compare-and-set claim semantics across Memory and Firestore job stores to prevent duplicate conversion on concurrent Cloud Tasks delivery.
 - `sessions/20260630_182254_authprovider-lint-safe-loading.md` - fixed `react-hooks/set-state-in-effect` lint failure in `apps/web/src/auth/AuthProvider.tsx` while preserving auth context shape and login/signup/logout behavior.
 - `sessions/20260630_185024_hwp2pdf-review-fixes.md` - consolidated final verification evidence for authenticated downloads, AuthProvider lint safety, and worker queued-claim review fixes.
+- `sessions/20260705_003400_configure-local-adsense-client.md` - configured local AdSense publisher client ID in environment variables to load AdSense script.
+
