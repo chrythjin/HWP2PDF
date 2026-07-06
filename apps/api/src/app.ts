@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { ANONYMOUS_ACCESS_TOKEN_HEADER } from "@hwp2pdf/shared";
 import { config } from "./config.js";
 import { router } from "./routes/v1.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
@@ -16,7 +17,12 @@ export async function createApp() {
 
   app.use(requestIdMiddleware);
   app.use(helmet());
-  app.use(cors({ origin: config.corsOrigin }));
+  app.use(
+    cors({
+      origin: config.corsOrigin,
+      allowedHeaders: ["Content-Type", "Authorization", ANONYMOUS_ACCESS_TOKEN_HEADER],
+    }),
+  );
   app.use(express.json({ limit: "1mb" }));
   app.use(
     rateLimit({
