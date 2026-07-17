@@ -37,6 +37,8 @@ This folder is the project documentation entry point for future OpenCode session
 
 ## Design / planning
 
+- `architecture/adr/README.md` - HWP2PDF architectural decisions index directory.
+- `architecture/adr/0001-private-converter-service-separation.md` - proposed private converter isolation and deployment contract (ADR).
 - `plan/auth-history-delete-board-roadmap.md` - Auth, history, deletion, board roadmap; full final implementation plan copied from `.omo/plans/auth-history-delete-board-final.md`.
 - `operations/api-cloud-run-runtime.md` - runtime deployment contract for the roadmap: Firebase Admin ADC/fallback credentials, Cloud Tasks queue/OIDC, Firestore collections, and GCS lifecycle.
 - `.github/workflows/deploy-api-cloud-run.yml` - Cloud Run API deployment workflow with Firebase Admin, Firestore, GCS, and Cloud Tasks environment wiring.

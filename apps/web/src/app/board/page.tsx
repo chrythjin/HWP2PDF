@@ -13,7 +13,11 @@ import { useEffect, useState, useCallback } from "react";
 import PageLayout from "@/components/PageLayout";
 import { useAuth } from "@/auth/useAuth";
 import { useBoardClaims } from "@/hooks/useBoardClaims";
-import { fetchWithAuth } from "@/lib/api-client";
+import {
+  ApiClientError,
+  fetchJsonWithAuth,
+  type ApiPageState,
+} from "@/lib/api-client";
 import {
   API_ROUTES,
   BOARD_CATEGORIES,
@@ -26,6 +30,49 @@ const CATEGORY_LABELS: Record<BoardCategory, string> = {
   qna: "질문답변",
   notice: "공지사항",
 };
+const BOARD_CATEGORY_VALUES = new Set<string>(BOARD_CATEGORIES);
+
+function isBoardPostSummary(value: unknown): value is BoardListResponse["data"][number] {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "title" in value &&
+    typeof value.title === "string" &&
+    "category" in value &&
+    typeof value.category === "string" &&
+    BOARD_CATEGORY_VALUES.has(value.category) &&
+    "authorId" in value &&
+    typeof value.authorId === "string" &&
+    "authorName" in value &&
+    typeof value.authorName === "string" &&
+    "createdAt" in value &&
+    typeof value.createdAt === "string" &&
+    "updatedAt" in value &&
+    typeof value.updatedAt === "string"
+  );
+}
+
+function isBoardListResponse(value: unknown): value is BoardListResponse {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("data" in value) || !Array.isArray(value.data) || !value.data.every(isBoardPostSummary)) {
+    return false;
+  }
+  if (!("meta" in value) || typeof value.meta !== "object" || value.meta === null) {
+    return false;
+  }
+  return (
+    "total" in value.meta &&
+    typeof value.meta.total === "number" &&
+    "page" in value.meta &&
+    typeof value.meta.page === "number" &&
+    "pageSize" in value.meta &&
+    typeof value.meta.pageSize === "number" &&
+    "totalPages" in value.meta &&
+    typeof value.meta.totalPages === "number"
+  );
+}
 
 export default function BoardListPage() {
   const { user, loading: authLoading } = useAuth();
@@ -35,11 +82,12 @@ export default function BoardListPage() {
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<BoardCategory | "all">("all");
   const [page, setPage] = useState(1);
-  const [loadingList, setLoadingList] = useState(false);
+  const [listState, setListState] = useState<ApiPageState>("idle");
+  const loadingList = listState === "loading";
 
   const fetchList = useCallback(async () => {
     if (!user) return;
-    setLoadingList(true);
+    setListState("loading");
     setError(null);
     try {
       const params = new URLSearchParams();
@@ -48,25 +96,22 @@ export default function BoardListPage() {
         params.set("category", category);
       }
       const route = `${API_ROUTES.BOARD_POSTS}?${params.toString()}`;
-      const res = await fetchWithAuth(route, user, { method: "GET" });
-      if (res.status === 401) {
-        setError("인증이 필요합니다. 로그인 후 이용해주세요.");
-        return;
-      }
-      if (res.status === 403) {
-        setError("접근 권한이 없습니다.");
-        return;
-      }
-      if (!res.ok) {
-        setError("게시판 목록을 불러오지 못했습니다.");
-        return;
-      }
-      const data: BoardListResponse = await res.json();
+      const data = await fetchJsonWithAuth(route, user, isBoardListResponse, {
+        method: "GET",
+      });
       setList(data);
-    } catch {
-      setError("게시판 목록을 불러오는 중 오류가 발생했습니다.");
-    } finally {
-      setLoadingList(false);
+      setListState(data.data.length === 0 ? "empty" : "success");
+    } catch (fetchError) {
+      if (fetchError instanceof ApiClientError && fetchError.code === "unauthorized") {
+        setError("인증이 필요합니다. 로그인 후 이용해주세요.");
+      } else if (fetchError instanceof ApiClientError && fetchError.code === "forbidden") {
+        setError("접근 권한이 없습니다.");
+      } else if (fetchError instanceof ApiClientError && fetchError.code !== "network_error") {
+        setError("게시판 목록을 불러오지 못했습니다.");
+      } else {
+        setError("게시판 목록을 불러오는 중 오류가 발생했습니다.");
+      }
+      setListState("error");
     }
   }, [user, page, category]);
 
@@ -119,7 +164,7 @@ export default function BoardListPage() {
 
   return (
     <PageLayout>
-      <div className="max-w-4xl mx-auto px-6 py-12">
+        <div className="max-w-4xl mx-auto px-6 py-12" aria-busy={loadingList}>
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
             게시판
@@ -134,7 +179,7 @@ export default function BoardListPage() {
         </div>
 
         {/* Category filter */}
-        <div className="flex items-center gap-2 mb-6" data-testid="board-category-filter">
+        <div className="flex items-center gap-2 mb-6" role="group" aria-label="게시판 카테고리" data-testid="board-category-filter">
           <button
             onClick={() => {
               setCategory("all");
@@ -145,6 +190,7 @@ export default function BoardListPage() {
                 ? "bg-blue-500 text-white"
                 : "bg-white/40 dark:bg-zinc-900/30 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800"
             }`}
+            aria-pressed={category === "all"}
           >
             전체
           </button>
@@ -163,6 +209,7 @@ export default function BoardListPage() {
                     ? "bg-blue-500 text-white"
                     : "bg-white/40 dark:bg-zinc-900/30 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800"
                 }`}
+                aria-pressed={category === cat}
                 data-testid={`board-category-${cat}`}
               >
                 {CATEGORY_LABELS[cat]}
@@ -228,7 +275,7 @@ export default function BoardListPage() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 mt-8" data-testid="board-pagination">
+          <nav className="flex items-center justify-center gap-2 mt-8" aria-label="게시판 페이지 이동" data-testid="board-pagination">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
@@ -237,7 +284,7 @@ export default function BoardListPage() {
             >
               이전
             </button>
-            <span className="text-sm text-zinc-600 dark:text-zinc-400">
+            <span className="text-sm text-zinc-600 dark:text-zinc-400" aria-current="page" aria-label={`현재 ${page}페이지, 전체 ${totalPages}페이지`}>
               {page} / {totalPages}
             </span>
             <button
@@ -248,7 +295,7 @@ export default function BoardListPage() {
             >
               다음
             </button>
-          </div>
+          </nav>
         )}
       </div>
     </PageLayout>

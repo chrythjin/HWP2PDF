@@ -57,6 +57,12 @@ const mockTokens: Record<string, MockDecodedToken> = {
   },
 };
 
+const HWP_OLE_HEADER = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+function fakeHwp(size = 64): Buffer {
+  return Buffer.concat([HWP_OLE_HEADER, Buffer.alloc(Math.max(0, size - HWP_OLE_HEADER.length))]);
+}
+
 function createMockVerifier(tokens: Record<string, MockDecodedToken>) {
   return async (idToken: string): Promise<MockDecodedToken> => {
     const decoded = tokens[idToken];
@@ -104,7 +110,9 @@ vi.mock("../services/storage-service.js", async (importOriginal) => {
     ...actual,
     shouldUseGcs: vi.fn(() => true),
     persistOriginalFile: vi.fn(async () => undefined),
-    downloadOriginalFile: vi.fn(async () => undefined),
+    downloadOriginalFile: vi.fn(async (input: { localPath: string; expectedFileSize?: number }) => {
+      await fs.writeFile(input.localPath, fakeHwp(input.expectedFileSize));
+    }),
     createOriginalUploadUrl: vi.fn(async (input: { jobId: string; originalFileName: string }) => ({
       objectPath: `staging/${input.jobId}/${input.originalFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`,
       uploadUrl: "https://fake-gcs-upload-url.example.com",
@@ -544,7 +552,7 @@ describe("upload initiate/complete/status ownership API (Todo 5)", () => {
     it("returns 202 with accessToken", async () => {
       // Create a temp HWP file to upload.
       const hwpPath = path.join(tempUploadDir, "test-multipart.hwp");
-      await fs.writeFile(hwpPath, "fake hwp content");
+      await fs.writeFile(hwpPath, fakeHwp());
 
       const res = await request(app)
         .post(API_ROUTES.UPLOAD)
@@ -565,7 +573,7 @@ describe("upload initiate/complete/status ownership API (Todo 5)", () => {
   describe("POST /v1/upload — multipart authenticated", () => {
     it("returns 202 without accessToken and binds userId", async () => {
       const hwpPath = path.join(tempUploadDir, "test-multipart-auth.hwp");
-      await fs.writeFile(hwpPath, "fake hwp content");
+      await fs.writeFile(hwpPath, fakeHwp());
 
       const res = await request(app)
         .post(API_ROUTES.UPLOAD)
@@ -592,6 +600,24 @@ describe("upload initiate/complete/status ownership API (Todo 5)", () => {
         .attach("file", txtPath);
 
       expect(res.status).toBe(422);
+    });
+
+    it("preserves the validation response when invalid-file cleanup fails", async () => {
+      const invalidHwpPath = path.join(tempUploadDir, "invalid-signature.hwp");
+      await fs.writeFile(invalidHwpPath, "not a hwp file");
+      vi.spyOn(fs, "rm").mockRejectedValueOnce(new Error("cleanup failed"));
+
+      const res = await request(app)
+        .post(API_ROUTES.UPLOAD)
+        .attach("file", invalidHwpPath);
+
+      expect(res.status).toBe(422);
+      expect(res.body).toEqual({
+        error: {
+          code: "invalid_file_signature",
+          message: "올바른 HWP 파일이 아닙니다.",
+        },
+      });
     });
   });
 

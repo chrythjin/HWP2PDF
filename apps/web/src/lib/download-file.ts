@@ -7,7 +7,7 @@
 
 import type { User } from "firebase/auth";
 import { ANONYMOUS_ACCESS_TOKEN_HEADER } from "@hwp2pdf/shared";
-import { fetchWithAuth } from "./api-client";
+import { ApiClientError, fetchBlobWithAuth } from "./api-client";
 
 export interface DownloadProtectedFileOptions {
   /** API route path (e.g. "/v1/jobs/:jobId/download") or full protected URL. */
@@ -20,9 +20,13 @@ export interface DownloadProtectedFileOptions {
   filename: string;
 }
 
-function getDownloadErrorMessage(status: number): string {
-  if (status === 401) return "인증이 필요합니다.";
-  if (status === 403) return "다운로드 권한이 없습니다.";
+function getDownloadErrorMessage(error: unknown): string {
+  if (error instanceof ApiClientError && error.code === "unauthorized") {
+    return "인증이 필요합니다.";
+  }
+  if (error instanceof ApiClientError && error.code === "forbidden") {
+    return "다운로드 권한이 없습니다.";
+  }
   return "PDF 다운로드에 실패했습니다.";
 }
 
@@ -53,15 +57,15 @@ export async function downloadProtectedFile({
     headers.set(ANONYMOUS_ACCESS_TOKEN_HEADER, anonymousJobToken);
   }
 
-  const response = await fetchWithAuth(url, user, {
-    method: "GET",
-    headers,
-  });
-
-  if (!response.ok) {
-    throw new Error(getDownloadErrorMessage(response.status));
+  let blob: Blob;
+  try {
+    blob = await fetchBlobWithAuth(url, user, {
+      method: "GET",
+      headers,
+    });
+  } catch (error) {
+    throw new Error(getDownloadErrorMessage(error));
   }
 
-  const blob = await response.blob();
   triggerBrowserDownload(blob, filename);
 }

@@ -358,6 +358,27 @@ describe("member job history and deletion API (Todo 7)", () => {
         .set("Authorization", "Bearer valid-user-token");
       expect(res.status).toBe(404);
     });
+
+    it("returns the same 404 for another user's deleted tombstone", async () => {
+      const job = makeJob({
+        jobId: "job-other-deleted-detail",
+        ownerType: "user",
+        userId: "user-456",
+        status: "deleted",
+        deletedAt: new Date().toISOString(),
+      });
+      await createJob(job as CreateJobInput);
+
+      const missing = await request(app)
+        .get(`${API_ROUTES.ME_JOBS}/missing-deleted-detail`)
+        .set("Authorization", "Bearer valid-user-token");
+      const res = await request(app)
+        .get(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual(missing.body);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -467,6 +488,27 @@ describe("member job history and deletion API (Todo 7)", () => {
         .set("Authorization", "Bearer valid-user-token");
       expect(res.status).toBe(404);
     });
+
+    it("returns the same 404 for another user's deleted tombstone", async () => {
+      const job = makeJob({
+        jobId: "job-other-deleted-delete",
+        ownerType: "user",
+        userId: "user-456",
+        status: "deleted",
+        deletedAt: new Date().toISOString(),
+      });
+      await createJob(job as CreateJobInput);
+
+      const missing = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/missing-deleted-delete`)
+        .set("Authorization", "Bearer valid-user-token");
+      const res = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual(missing.body);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -538,8 +580,8 @@ describe("member job history and deletion API (Todo 7)", () => {
       expect(stored!.resultPath).toBeUndefined();
       expect(stored!.resultObjectPath).toBeUndefined();
       expect(stored!.originalObjectPath).toBeUndefined();
-      expect(stored!.ownerType).toBeUndefined();
-      expect(stored!.userId).toBeUndefined();
+      expect(stored!.ownerType).toBe("user");
+      expect(stored!.userId).toBe("user-123");
       expect(stored!.accessTokenHash).toBeUndefined();
       expect(stored!.downloadExpiresAt).toBeUndefined();
       expect(stored!.metadataExpiresAt).toBeUndefined();
@@ -554,11 +596,13 @@ describe("member job history and deletion API (Todo 7)", () => {
         "expiresAt",
         "jobId",
         "originalFileName",
+        "ownerType",
         "progress",
         "sourcePath",
         "status",
         "tombstoneUntil",
         "updatedAt",
+        "userId",
       ]);
     });
 

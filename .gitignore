@@ -47,5 +47,8 @@ coverage/
 # API temporary test files
 apps/api/tmp/
 
+# pnpm is the only supported package manager
+package-lock.json
+
 # Graphify analysis output cache
 graphify-out/

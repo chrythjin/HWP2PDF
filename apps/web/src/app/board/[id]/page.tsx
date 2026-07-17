@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import PageLayout from "@/components/PageLayout";
+import ConfirmationDialog from "@/components/ConfirmationDialog";
 import { useAuth } from "@/auth/useAuth";
 import { useBoardClaims } from "@/hooks/useBoardClaims";
 import { fetchWithAuth } from "@/lib/api-client";
@@ -38,6 +39,7 @@ export default function BoardDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [deleteRequested, setDeleteRequested] = useState(false);
 
   useEffect(() => {
     if (!user || !postId) return;
@@ -83,8 +85,6 @@ export default function BoardDetailPage() {
 
   async function handleDelete() {
     if (!user || !post) return;
-    if (!window.confirm("정말 삭제하시겠습니까?")) return;
-
     setDeleting(true);
     try {
       const route = `${API_ROUTES.BOARD_POSTS}/${postId}`;
@@ -239,7 +239,7 @@ export default function BoardDetailPage() {
               수정
             </Link>
             <button
-              onClick={() => void handleDelete()}
+              onClick={() => setDeleteRequested(true)}
               disabled={deleting}
               className="inline-flex items-center justify-center px-5 py-2.5 rounded-full border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 font-medium hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               data-testid="board-delete-button"
@@ -248,6 +248,14 @@ export default function BoardDetailPage() {
             </button>
           </div>
         )}
+        <ConfirmationDialog
+          open={deleteRequested}
+          title="게시글을 삭제할까요?"
+          description="삭제된 게시글은 복구할 수 없습니다."
+          busy={deleting}
+          onCancel={() => setDeleteRequested(false)}
+          onConfirm={() => void handleDelete().finally(() => setDeleteRequested(false))}
+        />
       </div>
     </PageLayout>
   );

@@ -309,12 +309,13 @@ describe("listJobsByUser", () => {
     expect(jobs[0].jobId).toBe("a2");
   });
 
-  it("excludes deleted jobs even when includeDeleted=true because tombstones omit owner fields", async () => {
+  it("returns active tombstones to their owner only when includeDeleted=true", async () => {
     await store.createJob(baseUserJob({ jobId: "a1", userId: "user-A" }));
     await store.markJobDeleted("a1", "user-A");
 
     const jobs = await store.listJobsByUser("user-A", { includeDeleted: true });
-    expect(jobs).toEqual([]);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ jobId: "a1", ownerType: "user", userId: "user-A", status: "deleted" });
   });
 
   it("excludes anonymous jobs", async () => {
@@ -399,11 +400,11 @@ describe("markJobDeleted", () => {
     expect(deleted?.resultPath).toBeUndefined();
     expect(deleted?.resultObjectPath).toBeUndefined();
     expect(deleted?.originalObjectPath).toBeUndefined();
-    expect(deleted?.ownerType).toBeUndefined();
-    expect(deleted?.userId).toBeUndefined();
+    expect(deleted?.ownerType).toBe("user");
+    expect(deleted?.userId).toBe("user-A");
     expect(deleted?.accessTokenHash).toBeUndefined();
     expect(deleted?.downloadExpiresAt).toBeUndefined();
-    expect(deleted?.metadataExpiresAt).toBeUndefined();
+    expect(deleted?.metadataExpiresAt).toBeDefined();
     expect(deleted?.message).toBeUndefined();
     expect(Object.keys(deleted!).sort()).toEqual([
       "createdAt",
@@ -411,12 +412,15 @@ describe("markJobDeleted", () => {
       "deletedBy",
       "expiresAt",
       "jobId",
+      "metadataExpiresAt",
       "originalFileName",
+      "ownerType",
       "progress",
       "sourcePath",
       "status",
       "tombstoneUntil",
       "updatedAt",
+      "userId",
     ]);
 
     const deletedAtMs = Date.parse(deleted!.deletedAt!);
@@ -579,7 +583,7 @@ describe("UploadSession CRUD", () => {
 
     const expired = await store.getUploadSession("expired-1");
     const active = await store.getUploadSession("active-1");
-    expect(expired).toBeNull();
+    expect(expired).toMatchObject({ status: "expired" });
     expect(active).toBeDefined();
   });
 
@@ -597,7 +601,7 @@ describe("UploadSession CRUD", () => {
     const removed2 = await store.expireUploadSessions(new Date(t0 + 20000));
     expect(removed2).toBe(1);
     const fetched = await store.getUploadSession("s1");
-    expect(fetched).toBeNull();
+    expect(fetched).toMatchObject({ status: "expired" });
   });
 });
 
@@ -671,11 +675,11 @@ describe("tombstone filtering", () => {
     expect(jobs.find((j) => j.jobId === "old-deleted")).toBeUndefined();
   });
 
-  it("listJobsByUser excludes active tombstones even when includeDeleted=true", async () => {
+  it("listJobsByUser returns active tombstones when includeDeleted=true", async () => {
     await store.createJob(baseUserJob({ jobId: "j1", userId: "user-A" }));
     await store.markJobDeleted("j1", "user-A");
 
     const jobs = await store.listJobsByUser("user-A", { includeDeleted: true });
-    expect(jobs.find((j) => j.jobId === "j1")).toBeUndefined();
+    expect(jobs.find((j) => j.jobId === "j1")).toMatchObject({ status: "deleted", userId: "user-A" });
   });
 });

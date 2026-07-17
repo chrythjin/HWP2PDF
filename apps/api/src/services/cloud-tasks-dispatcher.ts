@@ -38,6 +38,8 @@ export interface EnqueueResult {
   taskId?: string;
 }
 
+export type ConversionDispatchTarget = "legacy" | "converter";
+
 // Minimal interface for the @google-cloud/tasks client.
 // We define our own interface to avoid a hard dependency at compile time.
 interface CloudTasksClientInterface {
@@ -143,6 +145,18 @@ export function createInternalWorkerUrl(): string {
   return `${normalized}/internal/workers/convert`;
 }
 
+export function getConversionDispatchTarget(): ConversionDispatchTarget {
+  return process.env.CONVERSION_DISPATCH_TARGET === "converter" ? "converter" : "legacy";
+}
+
+function getConverterWorkerUrl(): string {
+  return (process.env.CONVERTER_WORKER_URL ?? "").trim();
+}
+
+function getConverterWorkerAudience(): string {
+  return (process.env.CONVERTER_WORKER_AUDIENCE ?? "").trim();
+}
+
 /**
  * The expected OIDC audience for the worker endpoint.
  * Defaults to the worker URL itself if not explicitly configured.
@@ -152,6 +166,24 @@ export function createInternalWorkerUrl(): string {
 export function getWorkerAudience(): string {
   const audience = process.env.INTERNAL_WORKER_AUDIENCE ?? config.internalWorkerAudience;
   return audience || createInternalWorkerUrl();
+}
+
+/**
+ * Resolve the project that owns the Cloud Tasks queue.
+ *
+ * Cloud Tasks uses its own parent resource path, so a deployment that relies
+ * on ADC for GCS must not leave that path's project segment empty.
+ */
+export function getCloudTasksProjectId(): string {
+  return (
+    process.env.CLOUD_TASKS_PROJECT_ID
+    ?? process.env.GCS_PROJECT_ID
+    ?? process.env.FIRESTORE_PROJECT_ID
+    ?? process.env.FIREBASE_PROJECT_ID
+    ?? config.gcsProjectId
+    ?? config.firestoreProjectId
+    ?? config.firebaseProjectId
+  ).trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -174,12 +206,19 @@ export function resolveQueueConfig(): CloudTasksQueueConfig | null {
     return null;
   }
 
+  const target = getConversionDispatchTarget();
+  const workerUrl = target === "converter" ? getConverterWorkerUrl() : createInternalWorkerUrl();
+  const audience = target === "converter" ? getConverterWorkerAudience() : getWorkerAudience();
+  if (!workerUrl || !audience) {
+    return null;
+  }
+
   return {
     queueName,
     location,
     serviceAccountEmail,
-    workerUrl: createInternalWorkerUrl(),
-    audience: getWorkerAudience(),
+    workerUrl,
+    audience,
   };
 }
 
@@ -247,7 +286,9 @@ export async function enqueueConversionJob(
     const { getJob } = await import("./job-store.js");
     const job = await getJob(jobId);
     if (job) {
-      void convertJobToPdf({ jobId: job.jobId, sourcePath: job.sourcePath });
+    void convertJobToPdf({ jobId: job.jobId, sourcePath: job.sourcePath }).catch((error: unknown) => {
+      console.error("Inline conversion failed", error);
+    });
     }
     return { mode: "inline" };
   }
@@ -258,13 +299,21 @@ export async function enqueueConversionJob(
     throw new Error(
       "Cloud Tasks dispatcher is enabled but required env vars are missing. " +
         "Set CLOUD_TASKS_QUEUE_NAME, CLOUD_TASKS_LOCATION, and " +
-        "CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL, or set CONVERSION_DISPATCHER=inline " +
+        "CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL. When CONVERSION_DISPATCH_TARGET=converter, " +
+        "also set CONVERTER_WORKER_URL and CONVERTER_WORKER_AUDIENCE. Or set CONVERSION_DISPATCHER=inline " +
         "for local development.",
     );
   }
 
   const client = await getCloudTasksClient();
-  const parent = `projects/${config.gcsProjectId}/locations/${resolvedConfig.location}/queues/${resolvedConfig.queueName}`;
+  const projectId = getCloudTasksProjectId();
+  if (!projectId) {
+    throw new Error(
+      "Cloud Tasks dispatcher is enabled but the queue project is missing. " +
+        "Set CLOUD_TASKS_PROJECT_ID or a GCS, Firestore, or Firebase project ID.",
+    );
+  }
+  const parent = `projects/${projectId}/locations/${resolvedConfig.location}/queues/${resolvedConfig.queueName}`;
 
   const body = JSON.stringify({ jobId });
   const taskId = `${parent}/tasks/${jobId}-${Date.now()}`;
@@ -334,25 +383,26 @@ export function isJobStuck(job: {
 }
 
 /**
- * Mark a stuck job as eligible for re-enqueue by resetting it to "queued".
+ * Recover a batch of stale processing jobs and report whether `jobId` was
+ * included in the jobs recovered by that batch.
  *
- * This is a no-op if the job is not stuck. Returns true if the job was reset.
+ * The batch uses the configured stuck-job cutoff and is limited to 100 jobs.
+ * It does not target only the requested job ID; `false` means this job was not
+ * recovered in this batch, not that no other stale jobs were recovered.
  *
  * WARNING: Only call this from a dedicated cleanup task, not from the worker.
  * The worker should use optimistic locking instead.
  */
 export async function resetStuckJob(jobId: string): Promise<boolean> {
-  const { getJob } = await import("./job-store.js");
-  const job = await getJob(jobId);
-  if (!job) return false;
-
-  if (!isJobStuck(job)) return false;
-
-  await updateJob(jobId, {
-    status: "queued",
-    progress: PROGRESS.QUEUED,
-    message: "대기 중인 작업이 재시도 대기열에 재등록되었습니다.",
+  const thresholdMs = config.stuckJobThresholdMinutes * 60 * 1000;
+  const { recoverStaleProcessingJobs } = await import("./job-store.js");
+  const result = await recoverStaleProcessingJobs({
+    cutoff: new Date(Date.now() - thresholdMs),
+    limit: 100,
   });
+  return result.jobs.some((job) => job.jobId === jobId);
+}
 
-  return true;
+export async function enqueueRecoveredJobs(jobs: ReadonlyArray<{ jobId: string }>): Promise<EnqueueResult[]> {
+  return Promise.all(jobs.map((job) => enqueueConversionJob(job.jobId)));
 }

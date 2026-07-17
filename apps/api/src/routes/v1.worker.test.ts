@@ -19,6 +19,8 @@ import {
 } from "../middleware/worker-auth.js";
 import { resetMockDispatcher, getMockEnqueuedJobIds } from "../services/cloud-tasks-dispatcher.js";
 
+const HWP_OLE_HEADER = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
 // ---------------------------------------------------------------------------
 // Tests for the internal worker endpoint (Todo 6).
 //
@@ -516,7 +518,7 @@ describe("worker endpoint POST /internal/workers/convert (Todo 6)", () => {
     it("POST /v1/upload enqueues job in mock mode", async () => {
       // Create a temp HWP file to upload.
       const hwpPath = path.join(tempUploadDir, "test-enqueue.hwp");
-      await fs.writeFile(hwpPath, "fake hwp content");
+      await fs.writeFile(hwpPath, Buffer.concat([HWP_OLE_HEADER, Buffer.alloc(56)]));
 
       const res = await request(app)
         .post("/v1/upload")

@@ -139,6 +139,29 @@ describe("downloadProtectedFile", () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
 
+  it("does not create a browser download for a non-PDF success response", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("non-download response", {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      }),
+    );
+
+    await expect(
+      downloadProtectedFile({
+        url: AUTH_DOWNLOAD_URL,
+        user: makeUser(),
+        filename: "failed.pdf",
+      }),
+    ).rejects.toThrow("PDF 다운로드에 실패했습니다.");
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(document.createElement).not.toHaveBeenCalledWith("a");
+    expect(anchorClick).not.toHaveBeenCalled();
+    expect(document.body.appendChild).not.toHaveBeenCalled();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
   it("downloads the PDF blob with an object URL and revokes it after click", async () => {
     await downloadProtectedFile({
       url: AUTH_DOWNLOAD_URL,

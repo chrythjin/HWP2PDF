@@ -58,6 +58,10 @@ H2Orestart is GPL-3.0. Before public production launch, confirm the project's Sa
 | `INTERNAL_WORKER_URL` | auto | Full URL of the internal worker endpoint (`/internal/workers/convert`). If not set, constructed from the service's public URL or `INTERNAL_API_URL`. |
 | `INTERNAL_WORKER_AUDIENCE` | auto | Expected OIDC audience for the worker endpoint. Cloud Tasks generates a token with this audience; the worker verifies it matches. Defaults to the worker URL itself. |
 | `INTERNAL_WORKER_ISSUER` | `https://accounts.google.com` | Expected OIDC issuer for worker token verification. |
+| `MAINTENANCE_OIDC_AUDIENCE` | none | Exact audience accepted by `POST /internal/maintenance/run`. Configure Cloud Scheduler to mint its OIDC token with this same endpoint-specific value. |
+| `MAINTENANCE_OIDC_SUBJECT` | none | Exact Google service-account subject (`sub`, the immutable numeric unique ID), not an email address. Requests are rejected when this is absent or does not match. |
+| `MAINTENANCE_OIDC_ISSUER` | `https://accounts.google.com` | Exact issuer accepted for Scheduler OIDC tokens. |
+| `MAINTENANCE_BATCH_LIMIT` | `100` | Maximum stale jobs and expired upload sessions scanned per maintenance invocation. |
 | `STUCK_JOB_THRESHOLD_MINUTES` | `10` | Stuck-job recovery threshold. Jobs stuck in `queued` or `processing` longer than this may be re-enqueued by a cleanup task. |
 | `FIRESTORE_BOARD_POSTS_COLLECTION` | `boardPosts` | Firestore collection for board posts. |
 
@@ -163,6 +167,14 @@ The Cloud Tasks service account (`CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`) must have 
 The internal worker endpoint (`POST /internal/workers/convert`) is protected by OIDC token verification. Cloud Tasks generates an OIDC token with the configured audience (`INTERNAL_WORKER_AUDIENCE` or the worker URL). The API verifies the token's audience, issuer, and service account email before processing. Requests without a valid OIDC token are rejected with 401/403.
 
 The Cloud Run service is deployed with `--allow-unauthenticated` so that public API endpoints (health, upload, jobs) are accessible, but the worker endpoint is protected at the application layer by OIDC verification.
+
+### Scheduler maintenance endpoint
+
+`POST /internal/maintenance/run` runs the transaction-protected stale-processing recovery and expired upload-session cleanup primitives. It enqueues only jobs returned by a successful recovery claim and deletes only the exact object path returned by a successful one-time cleanup claim. Its response and structured completion log contain counts and pagination flags only; bearer tokens, job IDs, object paths, signed URLs, access tokens, and raw exceptions are not serialized.
+
+The endpoint fails closed unless both `MAINTENANCE_OIDC_AUDIENCE` and `MAINTENANCE_OIDC_SUBJECT` are configured. Scheduler must send a Google-signed OIDC bearer token whose `aud`, `iss`, and `sub` exactly match the configured values. Do not add a query-string cron secret or expose an unauthenticated maintenance route.
+
+Creating the Scheduler job, selecting its OIDC service account, reading that account's immutable subject ID, granting Cloud Run invocation permissions, and changing Cloud Run environment variables are production IAM/deployment actions. They are intentionally not automated by this repository change and require explicit user approval plus a staging verification window. A future approved setup must use an endpoint-specific audience and must not reuse a public client audience.
 
 ## Firestore TTL and cleanup
 

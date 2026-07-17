@@ -28,16 +28,103 @@ export type UploadStatus =
   | "expired"
   | "deleted";
 
-export interface JobStatusResponse {
+export const PUBLIC_CONVERSION_ERROR_CODES = [
+  "converter_unavailable",
+  "invalid_document",
+  "conversion_timeout",
+  "storage_failure",
+  "conversion_failed",
+] as const;
+
+export type PublicConversionErrorCode =
+  (typeof PUBLIC_CONVERSION_ERROR_CODES)[number];
+
+export type PublicConversionErrorCategory = "retryable" | "terminal";
+
+export interface PublicConversionError {
+  message: string;
+  category: PublicConversionErrorCategory;
+}
+
+export const PUBLIC_CONVERSION_ERRORS: Readonly<
+  Record<PublicConversionErrorCode, PublicConversionError>
+> = {
+  converter_unavailable: {
+    message: "현재 변환 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    category: "retryable",
+  },
+  invalid_document: {
+    message: "변환할 수 없는 문서입니다. 파일을 확인해 주세요.",
+    category: "terminal",
+  },
+  conversion_timeout: {
+    message: "변환 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
+    category: "retryable",
+  },
+  storage_failure: {
+    message: "파일 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+    category: "retryable",
+  },
+  conversion_failed: {
+    message: "문서 변환에 실패했습니다. 파일을 확인한 후 다시 시도해 주세요.",
+    category: "terminal",
+  },
+};
+
+export function normalizePublicConversionErrorCode(
+  value: unknown,
+): PublicConversionErrorCode {
+  return typeof value === "string" &&
+    PUBLIC_CONVERSION_ERROR_CODES.some((code) => code === value)
+    ? (value as PublicConversionErrorCode)
+    : "conversion_failed";
+}
+
+export const DOWNLOAD_UNAVAILABLE_REASONS = [
+  "not_completed",
+  "failed",
+  "expired",
+  "deleted",
+  "result_unavailable",
+  "access_denied",
+] as const;
+
+export type DownloadUnavailableReason =
+  (typeof DOWNLOAD_UNAVAILABLE_REASONS)[number];
+
+export function normalizeDownloadUnavailableReason(
+  value: unknown,
+): DownloadUnavailableReason {
+  return typeof value === "string" &&
+    DOWNLOAD_UNAVAILABLE_REASONS.some((reason) => reason === value)
+    ? (value as DownloadUnavailableReason)
+    : "result_unavailable";
+}
+
+interface JobStatusResponseBase {
   jobId: string;
+  /** Safe original upload filename for member history display. */
+  originalFileName?: string;
   status: UploadStatus;
   progress?: number;
+  /**
+   * @deprecated Migrate failure handling to `errorCode` and
+   * `PUBLIC_CONVERSION_ERRORS`. Removal is deferred until every producer and
+   * consumer has migrated.
+   */
   message?: string;
+  /** Safe public failure code. Internal errors must never be serialized here. */
+  errorCode?: PublicConversionErrorCode;
   downloadUrl?: string;
   createdAt?: string;
   updatedAt?: string;
   expiresAt?: string;
-  /** When the downloadable result file expires. Separate from metadataExpiresAt. */
+  /**
+   * @deprecated Migrate availability decisions to the server-computed
+   * `downloadAvailable` and `downloadUnavailableReason` fields. This timestamp
+   * remains compatible and its removal is deferred until every producer and
+   * consumer has migrated.
+   */
   downloadExpiresAt?: string;
   /** When the job metadata/history entry expires (member 30-day retention). */
   metadataExpiresAt?: string;
@@ -48,6 +135,27 @@ export interface JobStatusResponse {
   /** Tombstone retention deadline; after this the metadata row may be purged. */
   tombstoneUntil?: string;
 }
+
+export type DownloadAvailabilityState =
+  | {
+      /** Legacy records may omit the complete server-computed availability state. */
+      downloadAvailable?: undefined;
+      downloadUnavailableReason?: undefined;
+    }
+  | {
+      /** Server-computed result availability; clients must not derive it from local time. */
+      downloadAvailable: true;
+      downloadUnavailableReason?: never;
+    }
+  | {
+      /** Server-computed result availability; clients must not derive it from local time. */
+      downloadAvailable: false;
+      /** Server-computed reason required for every unavailable result. */
+      downloadUnavailableReason: DownloadUnavailableReason;
+    };
+
+export type JobStatusResponse = JobStatusResponseBase &
+  DownloadAvailabilityState;
 
 export interface DirectUploadInitRequest {
   fileName: string;

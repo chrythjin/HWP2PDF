@@ -215,7 +215,10 @@ if (initiate.status === 201) {
 // it's the only available path.
 if (initiate.status === 201 || initiate.status === 409) {
   const { Buffer } = await import("node:buffer");
-  const fakeHwpContent = Buffer.from("HWP Document File V5.0.0.0\n", "utf-8");
+  const fakeHwpContent = Buffer.concat([
+    Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+    Buffer.alloc(8),
+  ]);
   const formData = new FormData();
   const fileBlob = new Blob([fakeHwpContent], { type: "application/octet-stream" });
   formData.append("file", fileBlob, "smoke.hwp");

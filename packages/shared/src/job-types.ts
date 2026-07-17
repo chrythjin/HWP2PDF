@@ -2,14 +2,27 @@ export type {
   DirectUploadCompleteRequest,
   DirectUploadInitRequest,
   DirectUploadInitResponse,
+  DownloadAvailabilityState,
+  DownloadUnavailableReason,
   FileValidationResult,
   JobStatusResponse,
+  PublicConversionError,
+  PublicConversionErrorCategory,
+  PublicConversionErrorCode,
   UploadResponse,
   UploadStatus as JobStatus,
   UploadStatus,
 } from "./index";
 
-export { ALLOWED_EXTENSIONS as ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE as MAX_FILE_SIZE_BYTES } from "./index";
+export {
+  ALLOWED_EXTENSIONS as ALLOWED_FILE_EXTENSIONS,
+  DOWNLOAD_UNAVAILABLE_REASONS,
+  MAX_FILE_SIZE as MAX_FILE_SIZE_BYTES,
+  PUBLIC_CONVERSION_ERRORS,
+  PUBLIC_CONVERSION_ERROR_CODES,
+  normalizeDownloadUnavailableReason,
+  normalizePublicConversionErrorCode,
+} from "./index";
 
 export const MAX_FILE_SIZE_MB = 20;
 export type AllowedExtension = ".hwp";

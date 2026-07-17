@@ -4,6 +4,8 @@ import { Router } from "express";
 import {
   API_ROUTES,
   ANONYMOUS_ACCESS_TOKEN_HEADER,
+  DEFAULT_DOWNLOAD_TTL_MS,
+  DEFAULT_METADATA_RETENTION_MS,
   PROGRESS,
   UPLOAD_SESSION_TTL_MS,
   type AnonymousAccessTokenResponse,
@@ -15,7 +17,7 @@ import {
   type UploadStatus,
   validateFile,
 } from "@hwp2pdf/shared";
-import { handleUploadMiddleware } from "../middleware/upload.js";
+import { handleUploadMiddleware, validateHwpFileSignature } from "../middleware/upload.js";
 import { optionalAuth, requireAuth } from "../middleware/auth.js";
 import { ApiError } from "../utils/api-error.js";
 import { config } from "../config.js";
@@ -42,6 +44,7 @@ import {
   directUploadUrlTtlMs,
   downloadOriginalFile,
   extractAnonymousTokenFromHeaders,
+  getDownloadAvailability,
   getProtectedDownloadUrl,
   getStatusResponse,
   persistOriginalFile,
@@ -278,18 +281,41 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, optionalAuth, async (request, response,
       }
     }
 
-    await fs.mkdir(config.uploadDirectory, { recursive: true });
     const safeOriginalName = body.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
     const sourcePath = path.join(config.uploadDirectory, `${body.jobId}-${safeOriginalName}`);
-    await downloadOriginalFile({ objectPath: body.objectPath, localPath: sourcePath });
 
-    const expiresAt = new Date(Date.now() + config.jobRetentionMs).toISOString();
+    const now = Date.now();
+    const expiresAt = new Date(now + (session.ownerType === "user" ? DEFAULT_DOWNLOAD_TTL_MS : config.jobRetentionMs)).toISOString();
+    const metadataExpiresAt = session.ownerType === "user"
+      ? new Date(now + DEFAULT_METADATA_RETENTION_MS).toISOString()
+      : undefined;
+    await fs.mkdir(config.uploadDirectory, { recursive: true });
+    try {
+      await downloadOriginalFile({
+        objectPath: body.objectPath,
+        localPath: sourcePath,
+        expectedFileSize: session.fileSize,
+      });
+      if (!(await validateHwpFileSignature(sourcePath))) {
+        await fs.rm(sourcePath, { force: true });
+        await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
+        next(new ApiError(422, "invalid_file_signature", "올바른 HWP 파일이 아닙니다."));
+        return;
+      }
+    } catch (error) {
+      await fs.rm(sourcePath, { force: true });
+      throw error;
+    }
+
     const job = await createJob({
       jobId: body.jobId,
       originalFileName: body.fileName,
+      originalFileSize: session.fileSize,
       sourcePath,
       originalObjectPath: body.objectPath,
       expiresAt,
+      downloadExpiresAt: expiresAt,
+      metadataExpiresAt,
       status: "queued",
       progress: PROGRESS.QUEUED,
       message: "변환 작업이 대기열에 등록되었습니다.",
@@ -299,14 +325,18 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, optionalAuth, async (request, response,
       accessTokenHash: session.accessTokenHash,
     });
 
-    // Mark the upload session as completed.
-    await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
-
-    // Enqueue conversion via Cloud Tasks (or inline/mock in dev/test).
-    // The old `void convertJobToPdf(...)` fire-and-forget is replaced by
-    // a durable queue dispatch. See cloud-tasks-dispatcher.ts for mode
-    // resolution (cloud-tasks / inline / mock).
-    void enqueueConversionJob(job.jobId);
+    try {
+      await enqueueConversionJob(job.jobId);
+      await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
+    } catch (error) {
+      await updateJob(job.jobId, {
+        status: "failed",
+        progress: PROGRESS.FAILED,
+        message: "변환 작업을 대기열에 등록하지 못했습니다.",
+      });
+      await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
+      throw error;
+    }
 
     const responseBody: UploadResponse = {
       jobId: job.jobId,
@@ -337,7 +367,7 @@ router.post(API_ROUTES.UPLOAD, optionalAuth, handleUploadMiddleware, async (requ
       originalFileName: file.originalname,
     });
 
-    const expiresAt = new Date(Date.now() + config.jobRetentionMs).toISOString();
+    const now = Date.now();
 
     // --- Owner binding (decision D6/D13) ---
     let ownerType: "user" | "anonymous";
@@ -355,12 +385,20 @@ router.post(API_ROUTES.UPLOAD, optionalAuth, handleUploadMiddleware, async (requ
       accessTokenHash = hash;
     }
 
+    const expiresAt = new Date(now + (ownerType === "user" ? DEFAULT_DOWNLOAD_TTL_MS : config.jobRetentionMs)).toISOString();
+    const metadataExpiresAt = ownerType === "user"
+      ? new Date(now + DEFAULT_METADATA_RETENTION_MS).toISOString()
+      : undefined;
+
     const job = await createJob({
       jobId,
       originalFileName: file.originalname,
+      originalFileSize: file.size,
       sourcePath: file.path,
       originalObjectPath,
       expiresAt,
+      downloadExpiresAt: expiresAt,
+      metadataExpiresAt,
       status: "queued",
       progress: PROGRESS.QUEUED,
       message: "변환 작업이 대기열에 등록되었습니다.",
@@ -369,11 +407,17 @@ router.post(API_ROUTES.UPLOAD, optionalAuth, handleUploadMiddleware, async (requ
       accessTokenHash,
     });
 
-    // Enqueue conversion via Cloud Tasks (or inline/mock in dev/test).
-    // The old `void convertJobToPdf(...)` fire-and-forget is replaced by
-    // a durable queue dispatch. See cloud-tasks-dispatcher.ts for mode
-    // resolution (cloud-tasks / inline / mock).
-    void enqueueConversionJob(job.jobId);
+    try {
+      await enqueueConversionJob(job.jobId);
+    } catch (error) {
+      await updateJob(job.jobId, {
+        status: "failed",
+        progress: PROGRESS.FAILED,
+        message: "변환 작업을 대기열에 등록하지 못했습니다.",
+      });
+      await fs.rm(file.path, { force: true });
+      throw error;
+    }
 
     const body: UploadResponse & { accessToken?: string; accessTokenHeader?: string } = {
       jobId: job.jobId,
@@ -459,13 +503,15 @@ router.get(`${API_ROUTES.JOBS}/:jobId/download`, optionalAuth, async (request, r
       return;
     }
 
-    if (job.status === "expired") {
+    const availability = getDownloadAvailability(job);
+
+    if (!availability.downloadAvailable && availability.downloadUnavailableReason === "expired") {
       await removeLocalResultFile(job.resultPath);
-      next(new ApiError(410, "job_expired", job.message ?? "다운로드 가능 시간이 만료되었습니다."));
+      next(new ApiError(410, "job_expired", "다운로드 가능 시간이 만료되었습니다."));
       return;
     }
 
-    if (job.status !== "completed" || (!job.resultPath && !job.resultObjectPath)) {
+    if (!availability.downloadAvailable) {
       next(new ApiError(409, "result_not_ready", "아직 다운로드할 수 있는 PDF가 없습니다."));
       return;
     }
@@ -609,7 +655,19 @@ router.post("/internal/workers/convert", requireWorkerOidc, async (request, resp
     //   - Setting status to "failed" on error (with safe message).
     //   - Cleaning up the source file in finally.
     try {
-      await convertJobToPdf({ jobId: job.jobId, sourcePath: job.sourcePath });
+      let sourcePath = job.sourcePath;
+      if (job.originalObjectPath && shouldUseGcs()) {
+        await fs.mkdir(config.uploadDirectory, { recursive: true });
+        const safeOriginalName = job.originalFileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+        sourcePath = path.join(config.uploadDirectory, `${job.jobId}-${safeOriginalName}`);
+        await downloadOriginalFile({
+          objectPath: job.originalObjectPath,
+          localPath: sourcePath,
+          expectedFileSize: job.originalFileSize,
+        });
+      }
+
+      await convertJobToPdf({ jobId: job.jobId, sourcePath });
       response.status(200).json({ ok: true, jobId: job.jobId, status: "completed" });
     } catch (error) {
       // The conversion service already set status to "failed" internally.
@@ -620,13 +678,21 @@ router.post("/internal/workers/convert", requireWorkerOidc, async (request, resp
       const isRetryable = isRetryableConversionError(message);
 
       if (isRetryable) {
-        // Return 500 to trigger Cloud Tasks retry.
+        await updateJob(job.jobId, {
+          status: "queued",
+          progress: PROGRESS.QUEUED,
+          message: "일시적 오류로 변환 작업을 다시 시도합니다.",
+        });
+
+        // Return 500 to trigger Cloud Tasks retry. The queued state allows the
+        // retried delivery to claim the job again.
         response.status(500).json({
           ok: false,
           jobId: job.jobId,
           error: "retryable_conversion_failure",
           message: "일시적 변환 오류가 발생했습니다. 재시도됩니다.",
         });
+        return;
       } else {
         // Terminal failure — conversion service already set status to "failed".
         response.status(200).json({
@@ -635,6 +701,7 @@ router.post("/internal/workers/convert", requireWorkerOidc, async (request, resp
           status: "failed",
           message: "변환에 실패했습니다.",
         });
+        return;
       }
     }
   } catch (error) {
@@ -700,27 +767,8 @@ function isRetryableConversionError(message: string): boolean {
  * where ownership is already verified by getJobForUser/listJobsByUser.
  */
 async function toMemberJobResponse(job: JobRecord): Promise<JobStatusResponse> {
-  let downloadUrl: string | undefined;
-
-  if (job.status === "completed" && (job.resultPath || job.resultObjectPath)) {
-    const deadline = job.downloadExpiresAt ?? job.expiresAt;
-    if (Date.parse(deadline) > Date.now()) {
-      downloadUrl = await getProtectedDownloadUrl(job);
-    }
-  }
-
-  return {
-    jobId: job.jobId,
-    status: job.status as UploadStatus,
-    progress: job.progress,
-    message: job.message,
-    downloadUrl,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
-    expiresAt: job.expiresAt,
-    downloadExpiresAt: job.downloadExpiresAt,
-    metadataExpiresAt: job.metadataExpiresAt,
-  };
+  const verifier = () => ({ authorized: true, reason: "user_owner_match" as const });
+  return getStatusResponse(job, verifier, {});
 }
 
 // GET /v1/me/jobs — list the caller's non-deleted jobs, sorted by createdAt desc.
@@ -757,7 +805,11 @@ router.get(`${API_ROUTES.ME_JOBS}/:jobId`, requireAuth, async (request, response
     // the raw job record.
     if (!job) {
       const raw = await getJob(jobId);
-      if (raw && raw.status === "deleted") {
+      if (
+        raw?.status === "deleted"
+        && raw.ownerType === "user"
+        && raw.userId === request.user.uid
+      ) {
         next(new ApiError(410, "job_deleted", "삭제된 작업입니다."));
         return;
       }
@@ -788,7 +840,11 @@ router.delete(`${API_ROUTES.ME_JOBS}/:jobId`, requireAuth, async (request, respo
       // Idempotent delete: if the job is already deleted (tombstone), return 200.
       // getJobForUser returns null for deleted jobs, so we check the raw record.
       const raw = await getJob(jobId);
-      if (raw && raw.status === "deleted") {
+      if (
+        raw?.status === "deleted"
+        && raw.ownerType === "user"
+        && raw.userId === request.user.uid
+      ) {
         response.status(200).json({ ok: true, jobId, status: "deleted", noop: true });
         return;
       }

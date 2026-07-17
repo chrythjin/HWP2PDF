@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { PROGRESS } from "@hwp2pdf/shared";
+import {
+  PROGRESS,
+  PUBLIC_CONVERSION_ERRORS,
+  type PublicConversionErrorCode,
+} from "@hwp2pdf/shared";
 import { config } from "../config.js";
 import { updateJob } from "./job-store.js";
 import { publishResultFile } from "./storage-service.js";
@@ -11,6 +15,15 @@ const FIXED_LO_PROFILE_DIR = "/app/.lo-profile";
 export interface ConversionInput {
   jobId: string;
   sourcePath: string;
+}
+
+function classifyConversionError(error: unknown): PublicConversionErrorCode {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (/enoent|not found|cannot find|실행할 수 없습니다/.test(message)) return "converter_unavailable";
+  if (/timeout|timed out|etimedout|제한시간/.test(message)) return "conversion_timeout";
+  if (/storage|gcs|bucket|upload/.test(message)) return "storage_failure";
+  if (/invalid|corrupt|format|손상/.test(message)) return "invalid_document";
+  return "conversion_failed";
 }
 
 export async function convertJobToPdf(input: ConversionInput) {
@@ -50,11 +63,22 @@ export async function convertJobToPdf(input: ConversionInput) {
       message: "변환이 완료되었습니다.",
     });
   } catch (error) {
+    const errorCode = classifyConversionError(error);
+    console.error(JSON.stringify({
+      level: "error",
+      event: "conversion_failed",
+      jobId: input.jobId,
+      error: error instanceof Error
+        ? { name: error.name, message: error.message, stack: error.stack }
+        : { value: String(error) },
+    }));
     await updateJob(input.jobId, {
       status: "failed",
       progress: PROGRESS.FAILED,
-      message: error instanceof Error ? error.message : "변환에 실패했습니다.",
+      errorCode,
+      message: PUBLIC_CONVERSION_ERRORS[errorCode].message,
     });
+    throw error;
   } finally {
     await fs.rm(input.sourcePath, { force: true });
   }
@@ -81,27 +105,45 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
 
     let stderr = "";
     let stdout = "";
+    let settled = false;
+    const appendOutput = (current: string, chunk: Buffer) =>
+      (current + chunk.toString("utf8")).slice(-8_192);
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    };
+    const timeout = setTimeout(() => {
+      try {
+        process.kill("SIGKILL");
+      } catch {
+        // The close/error handler may have already observed process exit.
+      }
+      finish(() => reject(new Error(`LibreOffice 변환이 ${config.conversionTimeoutMs}ms 제한시간을 초과했습니다.`)));
+    }, config.conversionTimeoutMs);
+    timeout.unref();
 
     process.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
+      stdout = appendOutput(stdout, chunk);
     });
 
     process.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
+      stderr = appendOutput(stderr, chunk);
     });
 
     process.on("error", () => {
-      reject(new Error("LibreOffice 변환 엔진을 실행할 수 없습니다. LIBREOFFICE_BIN 또는 런타임 이미지를 확인하세요."));
+      finish(() => reject(new Error("LibreOffice 변환 엔진을 실행할 수 없습니다. LIBREOFFICE_BIN 또는 런타임 이미지를 확인하세요.")));
     });
 
     process.on("close", (code) => {
       if (code === 0) {
-        resolve();
+        finish(resolve);
         return;
       }
 
       const details = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").slice(0, 2000);
-      reject(new Error(details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`));
+      finish(() => reject(new Error(details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`)));
     });
   });
 

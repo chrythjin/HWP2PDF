@@ -19,6 +19,7 @@ import {
   listBoardPosts,
   updateBoardPost,
   validateBoardPostInput,
+  validateBoardPostPatch,
 } from "../services/board-store.js";
 
 export const boardRouter = Router();
@@ -203,25 +204,14 @@ boardRouter.patch(
 
       // Validate provided fields (partial update — only check present fields).
       if (body.title !== undefined || body.body !== undefined || body.category !== undefined) {
-        const validationError = validateBoardPostInput({
+        const validationError = validateBoardPostPatch({
           title: body.title,
           body: body.body,
           category: body.category,
         });
-        // For partial updates, allow undefined fields to pass validation.
-        // validateBoardPostInput returns error if any field is empty/invalid.
-        // We only want to reject if a *provided* field is invalid.
         if (validationError) {
-          // Check if the error is about a field that was actually provided.
-          const isTitleError = body.title !== undefined && validationError.includes("제목");
-          const isBodyError = body.body !== undefined && validationError.includes("내용");
-          const isCategoryError = body.category !== undefined && validationError.includes("카테고리");
-          // If all provided fields are valid but missing fields trigger error,
-          // only reject if at least one provided field is invalid.
-          if (isTitleError || isBodyError || isCategoryError) {
-            next(new ApiError(422, "invalid_post", validationError));
-            return;
-          }
+          next(new ApiError(422, "invalid_post", validationError));
+          return;
         }
       }
 

@@ -3,14 +3,22 @@
 // ---------------------------------------------------------------------------
 // JobHistoryList — renders the authenticated user's conversion jobs.
 //
-// Each row shows jobId, status, createdAt, and either a download button
-// (when completed and download not expired) or an "expired" label.
-// Download is performed via the onDownload callback so the Firebase user
-// stays in the page boundary and the T2 download helper handles auth.
-// A delete button with confirmation triggers the onDelete callback.
+// Download availability is governed by the T1/T2 server-computed
+// `downloadAvailable` discriminated contract:
+//   - downloadAvailable === true  -> download button enabled
+//   - downloadAvailable === false -> unavailable label with reason
+//   - legacy (undefined)          -> safe fallback: only enable if
+//                                    downloadUrl is present AND status is
+//                                    completed AND downloadExpiresAt is in
+//                                    the future.
+//
+// The component NEVER enables a download from status === "completed" alone.
 // ---------------------------------------------------------------------------
 
-import type { JobStatusResponse } from "@hwp2pdf/shared";
+import type {
+  DownloadUnavailableReason,
+  JobStatusResponse,
+} from "@hwp2pdf/shared";
 
 interface JobHistoryListProps {
   jobs: JobStatusResponse[];
@@ -24,12 +32,43 @@ interface JobHistoryListProps {
   downloadError: { jobId: string; message: string } | null;
 }
 
-function isDownloadExpired(job: JobStatusResponse): boolean {
+// ---- Legacy fallback: only for records without downloadAvailable ----
+function isLegacyDownloadExpired(job: JobStatusResponse): boolean {
   if (!job.downloadExpiresAt) {
-    // If no expiry is set, treat as expired when status is not completed.
     return job.status !== "completed";
   }
   return new Date(job.downloadExpiresAt).getTime() <= Date.now();
+}
+
+const UNAVAILABLE_REASON_LABELS: Record<DownloadUnavailableReason, string> = {
+  not_completed: "진행 중",
+  failed: "실패",
+  expired: "다운로드 만료됨",
+  deleted: "삭제됨",
+  result_unavailable: "다운로드 불가",
+  access_denied: "접근 권한 없음",
+};
+
+function getUnavailableLabel(job: JobStatusResponse): string {
+  if (job.downloadAvailable === false && job.downloadUnavailableReason) {
+    return UNAVAILABLE_REASON_LABELS[job.downloadUnavailableReason] ?? "다운로드 불가";
+  }
+  // Legacy fallback
+  return "다운로드 만료됨";
+}
+
+function canDownloadJob(job: JobStatusResponse): boolean {
+  // T1/T2 discriminated contract: server-computed availability
+  if (job.downloadAvailable === true) {
+    return true;
+  }
+  if (job.downloadAvailable === false) {
+    return false;
+  }
+  // Legacy: downloadAvailable is undefined — safe fallback
+  if (job.status !== "completed") return false;
+  if (!job.downloadUrl) return false;
+  return !isLegacyDownloadExpired(job);
 }
 
 function formatDate(iso?: string): string {
@@ -77,8 +116,8 @@ export default function JobHistoryList({
   return (
     <ul className="space-y-3" data-testid="history-list">
       {jobs.map((job) => {
-        const expired = isDownloadExpired(job);
-        const canDownload = job.status === "completed" && !expired;
+        const originalFileName = job.originalFileName?.trim() || "파일명 없는 변환 작업";
+        const canDownload = canDownloadJob(job);
         const isDeleting = deletingJobId === job.jobId;
         const isDownloading = downloadingJobId === job.jobId;
         const hasDownloadError = downloadError?.jobId === job.jobId;
@@ -90,8 +129,11 @@ export default function JobHistoryList({
             data-testid={`history-row-${job.jobId}`}
           >
             <div className="min-w-0 flex-1">
+              <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate" data-testid={`history-filename-${job.jobId}`}>
+                {originalFileName}
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-mono text-sm text-zinc-700 dark:text-zinc-300 truncate">
+                <span className="font-mono text-xs text-zinc-500 dark:text-zinc-400 truncate" title="변환 작업 ID">
                   {job.jobId}
                 </span>
                 <span
@@ -129,9 +171,9 @@ export default function JobHistoryList({
               ) : (
                 <span
                   className="text-sm text-zinc-400 dark:text-zinc-600"
-                  data-testid="download-expired-label"
+                  data-testid={`download-unavailable-label-${job.jobId}`}
                 >
-                  다운로드 만료됨
+                  {getUnavailableLabel(job)}
                 </span>
               )}
 

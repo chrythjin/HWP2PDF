@@ -11,7 +11,12 @@ import {
   BOARD_MAX_PAGE_SIZE,
   DEFAULT_DOWNLOAD_TTL_MS,
   DEFAULT_METADATA_RETENTION_MS,
+  DOWNLOAD_UNAVAILABLE_REASONS,
+  PUBLIC_CONVERSION_ERRORS,
+  PUBLIC_CONVERSION_ERROR_CODES,
   TOMBSTONE_RETENTION_MS,
+  normalizeDownloadUnavailableReason,
+  normalizePublicConversionErrorCode,
   validateFile,
   validateBoardCategory,
   validateBoardPost,
@@ -21,6 +26,7 @@ import {
   type UploadSession,
   type AnonymousAccessTokenResponse,
   type JobStatusResponse,
+  type PublicConversionErrorCode,
   type BoardPost,
   type BoardPostSummary,
   type BoardListResponse,
@@ -175,6 +181,22 @@ describe("AnonymousAccessTokenResponse", () => {
 });
 
 describe("JobStatusResponse retention fields", () => {
+  it("retains legacy message and downloadExpiresAt JSON serialization", () => {
+    const response: JobStatusResponse = {
+      jobId: "legacy-job",
+      status: "failed",
+      message: "기존 공개 메시지",
+      downloadExpiresAt: "2026-07-12T12:00:00.000Z",
+    };
+
+    expect(JSON.parse(JSON.stringify(response))).toEqual({
+      jobId: "legacy-job",
+      status: "failed",
+      message: "기존 공개 메시지",
+      downloadExpiresAt: "2026-07-12T12:00:00.000Z",
+    });
+  });
+
   it("supports download and metadata expiry fields plus deleted tombstone", () => {
     const response: JobStatusResponse = {
       jobId: "job-1",
@@ -200,6 +222,115 @@ describe("JobStatusResponse retention fields", () => {
     expect(response.deletedAt).toBeDefined();
     expect(response.deletedBy).toBe("uid-123");
     expect(response.tombstoneUntil).toBeDefined();
+  });
+
+  it("serializes server-computed download availability without internal material", () => {
+    const available: JobStatusResponse = {
+      jobId: "job-ready",
+      status: "completed",
+      message: "변환이 완료되었습니다.",
+      downloadAvailable: true,
+      downloadExpiresAt: "2026-07-12T12:00:00.000Z",
+    };
+    const unavailable: JobStatusResponse = {
+      jobId: "job-expired",
+      status: "expired",
+      errorCode: "conversion_failed",
+      message: PUBLIC_CONVERSION_ERRORS.conversion_failed.message,
+      downloadAvailable: false,
+      downloadUnavailableReason: "expired",
+      downloadExpiresAt: "2026-07-12T11:00:00.000Z",
+    };
+
+    expect(JSON.parse(JSON.stringify([available, unavailable]))).toEqual([
+      available,
+      unavailable,
+    ]);
+    expect(JSON.stringify(unavailable)).not.toMatch(
+      /(?:https?:\/\/|LIBREOFFICE_BIN|token|exception|originalObjectPath|resultPath)/i,
+    );
+  });
+
+  it("rejects contradictory server-computed download states at the type boundary", () => {
+    const legacy: JobStatusResponse = {
+      jobId: "legacy-job",
+      status: "completed",
+    };
+    const available: JobStatusResponse = {
+      jobId: "available-job",
+      status: "completed",
+      downloadAvailable: true,
+    };
+    const unavailable: JobStatusResponse = {
+      jobId: "unavailable-job",
+      status: "expired",
+      downloadAvailable: false,
+      downloadUnavailableReason: "expired",
+    };
+
+    const contradictoryAvailable: JobStatusResponse = {
+      jobId: "contradictory-available",
+      status: "completed",
+      downloadAvailable: true,
+      // @ts-expect-error available results cannot carry an unavailable reason
+      downloadUnavailableReason: "expired",
+    };
+    // @ts-expect-error unavailable results require a reason
+    const contradictoryUnavailable: JobStatusResponse = {
+      jobId: "contradictory-unavailable",
+      status: "expired",
+      downloadAvailable: false,
+    };
+
+    expect([legacy, available, unavailable]).toHaveLength(3);
+    expect(contradictoryAvailable.downloadAvailable).toBe(true);
+    expect(contradictoryUnavailable.downloadAvailable).toBe(false);
+  });
+});
+
+describe("public conversion errors", () => {
+  it("exposes only closed safe Korean errors with retry semantics", () => {
+    const validCodes: PublicConversionErrorCode[] = [
+      "converter_unavailable",
+      "invalid_document",
+      "conversion_timeout",
+      "storage_failure",
+      "conversion_failed",
+    ];
+
+    expect(PUBLIC_CONVERSION_ERROR_CODES).toEqual(validCodes);
+    expect(PUBLIC_CONVERSION_ERRORS.conversion_timeout).toEqual({
+      message: "변환 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
+      category: "retryable",
+    });
+    expect(PUBLIC_CONVERSION_ERRORS.invalid_document.category).toBe("terminal");
+    expect(normalizePublicConversionErrorCode("unknown_internal_code")).toBe(
+      "conversion_failed",
+    );
+
+    for (const code of validCodes) {
+      const publicError = PUBLIC_CONVERSION_ERRORS[code];
+      expect(publicError.message).not.toMatch(
+        /(?:https?:\/\/|[A-Za-z]:\\|\/[^\s]+\/[^\s]+|LIBREOFFICE_BIN|token|exception)/i,
+      );
+    }
+  });
+
+  it("safely maps an unknown download reason", () => {
+    expect(normalizeDownloadUnavailableReason("gs://private/result.pdf")).toBe(
+      "result_unavailable",
+    );
+  });
+
+  it("exposes the intended closed download unavailable reason set", () => {
+    expect(DOWNLOAD_UNAVAILABLE_REASONS).toEqual([
+      "not_completed",
+      "failed",
+      "expired",
+      "deleted",
+      "result_unavailable",
+      "access_denied",
+    ]);
   });
 });
 

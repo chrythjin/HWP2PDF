@@ -93,6 +93,7 @@ const mockPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush, replace: mockPush, refresh: mockPush }),
   useParams: vi.fn(() => ({ id: "post-1" })),
+  usePathname: vi.fn(() => "/board"),
 }));
 
 // ---------------------------------------------------------------------------
@@ -287,6 +288,81 @@ describe("Board UI pages", () => {
       const init = listCall![1] as RequestInit;
       const headers = init.headers as Headers;
       expect(headers.get("Authorization")).toBe("Bearer mock-id-token");
+    });
+
+    it("shows the existing error message instead of empty for malformed success JSON", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+      mockFetchResponse("/v1/board/posts", 200, { data: [] });
+
+      renderWithAuth(<BoardListPage />);
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-error")).toHaveTextContent(
+          "게시판 목록을 불러오지 못했습니다.",
+        );
+      });
+      expect(screen.queryByTestId("board-empty")).not.toBeInTheDocument();
+    });
+
+    it.each([
+      [401, "인증이 필요합니다. 로그인 후 이용해주세요."],
+      [403, "접근 권한이 없습니다."],
+      [500, "게시판 목록을 불러오지 못했습니다."],
+    ])("preserves the board error message for HTTP %i", async (status, message) => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+      mockFetchResponse("/v1/board/posts", status, { error: "private detail" });
+
+      renderWithAuth(<BoardListPage />);
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-error")).toHaveTextContent(message);
+      });
+      expect(screen.queryByTestId("board-empty")).not.toBeInTheDocument();
+    });
+
+    it("preserves the board network error message and does not show empty", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+      (globalThis.fetch as Mock).mockRejectedValue(new TypeError("private network detail"));
+
+      renderWithAuth(<BoardListPage />);
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-error")).toHaveTextContent(
+          "게시판 목록을 불러오는 중 오류가 발생했습니다.",
+        );
+      });
+      expect(screen.queryByTestId("board-empty")).not.toBeInTheDocument();
+    });
+
+    it("shows empty only for a valid empty board response", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+      mockFetchResponse("/v1/board/posts", 200, {
+        data: [],
+        meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      });
+
+      renderWithAuth(<BoardListPage />);
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-empty")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("board-error")).not.toBeInTheDocument();
     });
   });
 
@@ -604,8 +680,6 @@ describe("Board UI pages", () => {
       const mockUser = createMockUser({ uid: "user-1" });
       setMockCurrentUser(mockUser);
 
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-
       mockFetchImplementation((url, init) => {
         if (url.includes("/v1/board/posts/post-1") && (!init?.method || init.method === "GET")) {
           return new Response(
@@ -641,8 +715,11 @@ describe("Board UI pages", () => {
       await act(async () => {
         fireEvent.click(screen.getByTestId("board-delete-button"));
       });
-
-      expect(confirmSpy).toHaveBeenCalled();
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("confirmation-confirm"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
 
       const calls = (globalThis.fetch as Mock).mock.calls;
       const deleteCall = calls.find(
@@ -655,7 +732,6 @@ describe("Board UI pages", () => {
       const headers = init.headers as Headers;
       expect(headers.get("Authorization")).toBe("Bearer mock-id-token");
 
-      confirmSpy.mockRestore();
     });
 
     it("renders body as plain text (no dangerouslySetInnerHTML)", async () => {
@@ -915,6 +991,165 @@ describe("Board UI pages", () => {
       // Author fields must NOT be in the PATCH body.
       expect(body.authorId).toBeUndefined();
       expect(body.authorName).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // T8: Board list accessibility — category group, aria-pressed, aria-busy,
+  // pagination navigation landmark, and current-page context.
+  // -----------------------------------------------------------------------
+
+  describe("BoardListPage accessibility (T8)", () => {
+    it("category filter has role=group with accessible name and aria-pressed per button", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts", 200, {
+        data: [],
+        meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-category-filter")).toBeInTheDocument();
+      });
+
+      // The filter container must be a named group.
+      const filter = screen.getByTestId("board-category-filter");
+      expect(filter).toHaveAttribute("role", "group");
+      expect(filter).toHaveAttribute("aria-label", "게시판 카테고리");
+
+      // The "전체" button must have aria-pressed=true initially.
+      const allButton = screen.getByText("전체");
+      expect(allButton).toHaveAttribute("aria-pressed", "true");
+
+      // The general button must have aria-pressed=false initially.
+      const generalButton = screen.getByTestId("board-category-general");
+      expect(generalButton).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("aria-pressed toggles when a category button is clicked", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts", 200, {
+        data: [],
+        meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-category-general")).toBeInTheDocument();
+      });
+
+      const generalButton = screen.getByTestId("board-category-general");
+      await act(async () => {
+        fireEvent.click(generalButton);
+      });
+
+      // After clicking general, its aria-pressed becomes true and 전체 becomes false.
+      expect(generalButton).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("전체")).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("list container has aria-busy while fetching and false when idle", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      // Delay the fetch response so aria-busy=true is observable.
+      let resolveList: ((value: Response) => void) | null = null;
+      const listPromise = new Promise<Response>((resolve) => {
+        resolveList = resolve;
+      });
+
+      mockFetchImplementation((url) => {
+        if (url.includes("/v1/board/posts")) {
+          return listPromise as unknown as Response;
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      // While the fetch is pending, the container should be aria-busy=true.
+      await waitFor(() => {
+        const container = document.querySelector("[aria-busy='true']");
+        expect(container).not.toBeNull();
+      });
+
+      // Resolve the fetch.
+      await act(async () => {
+        resolveList!(
+          new Response(
+            JSON.stringify({ data: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      // After fetch completes, aria-busy should be false.
+      await waitFor(() => {
+        const busyTrue = document.querySelector("[aria-busy='true']");
+        expect(busyTrue).toBeNull();
+      });
+    });
+
+    it("pagination is a nav landmark with aria-current=page and page context", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      // Return 2 pages of data.
+      mockFetchResponse("/v1/board/posts", 200, {
+        data: [
+          {
+            id: "post-1",
+            title: "Post 1",
+            category: "general",
+            authorId: "user-1",
+            authorName: "Test User",
+            createdAt: "2026-06-20T10:00:00.000Z",
+            updatedAt: "2026-06-20T10:00:00.000Z",
+          },
+        ],
+        meta: { total: 25, page: 1, pageSize: 20, totalPages: 2 },
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-pagination")).toBeInTheDocument();
+      });
+
+      // The pagination must be a <nav> with an accessible name.
+      const pagination = screen.getByTestId("board-pagination");
+      expect(pagination.tagName).toBe("NAV");
+      expect(pagination).toHaveAttribute("aria-label", "게시판 페이지 이동");
+
+      // The current page indicator must have aria-current=page.
+      const currentPage = pagination.querySelector("[aria-current='page']");
+      expect(currentPage).not.toBeNull();
+      // The aria-label must include the current page and total pages context.
+      expect(currentPage?.getAttribute("aria-label")).toContain("1");
+      expect(currentPage?.getAttribute("aria-label")).toContain("2");
     });
   });
 });

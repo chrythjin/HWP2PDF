@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { config } from "../config.js";
+import { createInternalWorkerUrl } from "../services/cloud-tasks-dispatcher.js";
 import { ApiError } from "../utils/api-error.js";
 
 // ---------------------------------------------------------------------------
@@ -163,22 +164,27 @@ export async function getOidcTokenVerifier(): Promise<OidcTokenVerifier> {
  * Defaults to the worker URL if not explicitly configured.
  */
 export function getExpectedAudience(): string {
-  return config.internalWorkerAudience || config.internalWorkerUrl || `http://localhost:${config.port}/internal/workers/convert`;
+  return (
+    process.env.INTERNAL_WORKER_AUDIENCE
+    || config.internalWorkerAudience
+    || createInternalWorkerUrl()
+  );
 }
 
 /**
  * The expected OIDC issuer. Defaults to the standard Google issuer.
  */
 export function getExpectedIssuer(): string {
-  return config.internalWorkerIssuer || "https://accounts.google.com";
+  return process.env.INTERNAL_WORKER_ISSUER || config.internalWorkerIssuer || "https://accounts.google.com";
 }
 
 /**
- * The expected service account email. If not configured, email verification
- * is skipped (but audience and issuer are still checked).
+ * The expected service account email. Converter-only mode must configure this
+ * value; the public monolith keeps its legacy compatibility behavior until a
+ * separate converter is cut over.
  */
 export function getExpectedServiceAccountEmail(): string | null {
-  return config.cloudTasksServiceAccountEmail || null;
+  return process.env.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL || config.cloudTasksServiceAccountEmail || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,13 +237,21 @@ export async function requireWorkerOidc(
 
     // Verify issuer
     const expectedIssuer = getExpectedIssuer();
-    if (decoded.iss && decoded.iss !== expectedIssuer) {
+    if (!decoded.iss || decoded.iss !== expectedIssuer) {
       next(new ApiError(403, "forbidden", "Worker 토큰 issuer가 일치하지 않습니다."));
       return;
     }
 
-    // Verify service account email (if configured)
+    // A converter that cannot identify its Cloud Tasks OIDC subject must never
+    // accept a worker request. This prevents a deployment configuration error
+    // from silently weakening the audience/issuer/email triple match.
     const expectedEmail = getExpectedServiceAccountEmail();
+    if ((process.env.CONVERTER_ONLY === "true" || config.converterOnly) && !expectedEmail) {
+      next(new ApiError(503, "worker_identity_unavailable", "Worker 서비스 계정 설정이 필요합니다."));
+      return;
+    }
+
+    // Verify service account email when configured.
     if (expectedEmail && decoded.email !== expectedEmail) {
       next(new ApiError(403, "forbidden", "Worker 서비스 계정이 일치하지 않습니다."));
       return;

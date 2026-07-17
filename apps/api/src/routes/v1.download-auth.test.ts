@@ -229,8 +229,17 @@ describe("protected download boundary — route level", () => {
         .set("Authorization", "Bearer valid-user-token");
 
       expect(res.status).toBe(200);
-      expect(res.body.downloadUrl).toBeDefined();
-      expect(res.body.downloadUrl).toContain(`/v1/jobs/${job.jobId}/download`);
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          jobId: job.jobId,
+          status: "completed",
+          progress: 100,
+          downloadUrl: expect.stringContaining(`/v1/jobs/${job.jobId}/download`),
+        }),
+      );
+      expect(res.body.sourcePath).toBeUndefined();
+      expect(res.body.resultPath).toBeUndefined();
+      expect(res.body.resultObjectPath).toBeUndefined();
     });
   });
 
@@ -399,6 +408,121 @@ describe("protected download boundary — route level", () => {
 
       const res = await request(app).get(`/v1/jobs/${job.jobId}/download`);
       expect(res.status).toBe(401);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Server-computed public download state and safe failure serialization
+  // -----------------------------------------------------------------------
+
+  describe("public job status state matrix", () => {
+    it("does not expose deleted-job audit or tombstone metadata", async () => {
+      const token = "deleted-metadata-token";
+      const job = makeJob({
+        jobId: "state-deleted-private-metadata",
+        ownerType: "anonymous",
+        accessTokenHash: hashAccessToken(token),
+        status: "deleted",
+        deletedAt: new Date().toISOString(),
+        deletedBy: "internal-owner-uid-SECRET",
+        metadataExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        tombstoneUntil: new Date(Date.now() + 120_000).toISOString(),
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(`/v1/jobs/${job.jobId}`)
+        .set("X-Job-Access-Token", token);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          jobId: job.jobId,
+          status: "deleted",
+          downloadAvailable: false,
+          downloadUnavailableReason: "deleted",
+        }),
+      );
+      expect(res.body).not.toHaveProperty("deletedBy");
+      expect(res.body).not.toHaveProperty("deletedAt");
+      expect(res.body).not.toHaveProperty("metadataExpiresAt");
+      expect(res.body).not.toHaveProperty("tombstoneUntil");
+    });
+
+    it.each([
+      {
+        name: "completed with result",
+        jobId: "state-completed",
+        overrides: { status: "completed" as const, resultPath: "__RESULT__" },
+        expected: { downloadAvailable: true, downloadUnavailableReason: undefined },
+      },
+      {
+        name: "completed without result",
+        jobId: "state-missing-result",
+        overrides: { status: "completed" as const },
+        expected: { downloadAvailable: false, downloadUnavailableReason: "result_unavailable" },
+      },
+      {
+        name: "expired",
+        jobId: "state-expired",
+        overrides: {
+          status: "completed" as const,
+          resultPath: "__RESULT__",
+          downloadExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+        },
+        expected: { downloadAvailable: false, downloadUnavailableReason: "expired" },
+      },
+      {
+        name: "deleted",
+        jobId: "state-deleted",
+        overrides: { status: "deleted" as const, deletedAt: new Date().toISOString() },
+        expected: { downloadAvailable: false, downloadUnavailableReason: "deleted" },
+      },
+      {
+        name: "failed",
+        jobId: "state-failed",
+        overrides: {
+          status: "failed" as const,
+          message:
+            "spawn C:\\private\\soffice.exe failed gs://secret/result.pdf?X-Goog-Signature=signed token=secret\nError stack",
+        },
+        expected: { downloadAvailable: false, downloadUnavailableReason: "failed" },
+      },
+      {
+        name: "non-completed",
+        jobId: "state-processing",
+        overrides: { status: "processing" as const, progress: 70 },
+        expected: { downloadAvailable: false, downloadUnavailableReason: "not_completed" },
+      },
+    ])("publishes coherent state for $name", async ({ jobId, overrides, expected }) => {
+      const token = `token-${jobId}`;
+      const resolvedOverrides = {
+        ...overrides,
+        ...(overrides.resultPath === "__RESULT__" ? { resultPath: resultFilePath } : {}),
+      };
+      const job = makeJob({
+        jobId,
+        ownerType: "anonymous",
+        accessTokenHash: hashAccessToken(token),
+        ...resolvedOverrides,
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(`/v1/jobs/${job.jobId}`)
+        .set("X-Job-Access-Token", token);
+
+      expect(res.status).toBe(200);
+      expect(res.body.downloadAvailable).toBe(expected.downloadAvailable);
+      expect(res.body.downloadUnavailableReason).toBe(expected.downloadUnavailableReason);
+
+      if (jobId === "state-failed") {
+        expect(res.body.errorCode).toBe("conversion_failed");
+        expect(res.body.message).toBe("문서 변환에 실패했습니다. 파일을 확인한 후 다시 시도해 주세요.");
+        expect(JSON.stringify(res.body)).not.toMatch(
+          /private|soffice|gs:\/\/|X-Goog-Signature|token=|Error stack/i,
+        );
+      }
     });
   });
 

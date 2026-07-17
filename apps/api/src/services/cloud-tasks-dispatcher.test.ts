@@ -7,9 +7,11 @@ import {
   resolveQueueConfig,
   createInternalWorkerUrl,
   getWorkerAudience,
+  getCloudTasksProjectId,
   resetCloudTasksClientForTesting,
   type CloudTasksQueueConfig,
 } from "./cloud-tasks-dispatcher.js";
+import { getExpectedAudience } from "../middleware/worker-auth.js";
 
 // ---------------------------------------------------------------------------
 // Tests for the Cloud Tasks conversion dispatcher (Todo 6).
@@ -35,9 +37,16 @@ describe("cloud-tasks-dispatcher", () => {
     delete process.env.CLOUD_TASKS_QUEUE_NAME;
     delete process.env.CLOUD_TASKS_LOCATION;
     delete process.env.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL;
+    delete process.env.CLOUD_TASKS_PROJECT_ID;
+    delete process.env.GCS_PROJECT_ID;
+    delete process.env.FIRESTORE_PROJECT_ID;
+    delete process.env.FIREBASE_PROJECT_ID;
     delete process.env.INTERNAL_WORKER_URL;
     delete process.env.INTERNAL_API_URL;
     delete process.env.INTERNAL_WORKER_AUDIENCE;
+    delete process.env.CONVERSION_DISPATCH_TARGET;
+    delete process.env.CONVERTER_WORKER_URL;
+    delete process.env.CONVERTER_WORKER_AUDIENCE;
   });
 
   afterEach(() => {
@@ -156,6 +165,30 @@ describe("cloud-tasks-dispatcher", () => {
       expect(config!.workerUrl).toBe("https://api.example.com/internal/workers/convert");
       expect(config!.audience).toBe("https://api.example.com/internal/workers/convert");
     });
+
+    it("selects an explicit dedicated converter target", () => {
+      process.env.CLOUD_TASKS_QUEUE_NAME = "conversion-queue";
+      process.env.CLOUD_TASKS_LOCATION = "asia-northeast3";
+      process.env.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL = "dispatcher@project.iam.gserviceaccount.com";
+      process.env.CONVERSION_DISPATCH_TARGET = "converter";
+      process.env.CONVERTER_WORKER_URL = "https://converter.example.com/internal/workers/convert";
+      process.env.CONVERTER_WORKER_AUDIENCE = "https://converter.example.com";
+
+      expect(resolveQueueConfig()).toMatchObject({
+        workerUrl: "https://converter.example.com/internal/workers/convert",
+        audience: "https://converter.example.com",
+      });
+    });
+
+    it("fails closed for converter target when its URL or audience is absent", () => {
+      process.env.CLOUD_TASKS_QUEUE_NAME = "conversion-queue";
+      process.env.CLOUD_TASKS_LOCATION = "asia-northeast3";
+      process.env.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL = "dispatcher@project.iam.gserviceaccount.com";
+      process.env.CONVERSION_DISPATCH_TARGET = "converter";
+      process.env.CONVERTER_WORKER_URL = "https://converter.example.com/internal/workers/convert";
+
+      expect(resolveQueueConfig()).toBeNull();
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -190,15 +223,54 @@ describe("cloud-tasks-dispatcher", () => {
   });
 
   describe("getWorkerAudience", () => {
-    it("uses INTERNAL_WORKER_AUDIENCE when set", () => {
+    it("keeps sender and verifier aligned on explicit audience precedence", () => {
       process.env.INTERNAL_WORKER_AUDIENCE = "custom-audience-string";
+      process.env.INTERNAL_WORKER_URL = "https://worker.example.com/internal/workers/convert";
+      process.env.INTERNAL_API_URL = "https://api.example.com";
+      process.env.PORT = "9090";
+
       expect(getWorkerAudience()).toBe("custom-audience-string");
+      expect(getExpectedAudience()).toBe(getWorkerAudience());
     });
 
-    it("falls back to worker URL when audience is not set", () => {
+    it("keeps sender and verifier aligned on worker URL precedence", () => {
       delete process.env.INTERNAL_WORKER_AUDIENCE;
-      process.env.INTERNAL_WORKER_URL = "https://api.example.com/internal/workers/convert";
-      expect(getWorkerAudience()).toBe("https://api.example.com/internal/workers/convert");
+      process.env.INTERNAL_WORKER_URL = "https://worker.example.com/internal/workers/convert";
+      process.env.INTERNAL_API_URL = "https://api.example.com";
+      process.env.PORT = "9090";
+
+      expect(getWorkerAudience()).toBe("https://worker.example.com/internal/workers/convert");
+      expect(getExpectedAudience()).toBe(getWorkerAudience());
+    });
+
+    it("matches the verifier audience when the worker URL is derived from INTERNAL_API_URL", () => {
+      delete process.env.INTERNAL_WORKER_AUDIENCE;
+      delete process.env.INTERNAL_WORKER_URL;
+      process.env.INTERNAL_API_URL = "https://api.example.com/";
+
+      expect(getExpectedAudience()).toBe(getWorkerAudience());
+    });
+
+    it("matches the verifier audience when the worker URL uses the runtime PORT fallback", () => {
+      delete process.env.INTERNAL_WORKER_AUDIENCE;
+      delete process.env.INTERNAL_WORKER_URL;
+      delete process.env.INTERNAL_API_URL;
+      process.env.PORT = "9090";
+
+      expect(getExpectedAudience()).toBe(getWorkerAudience());
+    });
+  });
+
+  describe("getCloudTasksProjectId", () => {
+    it("prefers an explicit Cloud Tasks project ID", () => {
+      process.env.CLOUD_TASKS_PROJECT_ID = "tasks-project";
+      process.env.GCS_PROJECT_ID = "storage-project";
+      expect(getCloudTasksProjectId()).toBe("tasks-project");
+    });
+
+    it("falls back to the configured Google project environment values", () => {
+      process.env.FIREBASE_PROJECT_ID = "firebase-project";
+      expect(getCloudTasksProjectId()).toBe("firebase-project");
     });
   });
 
@@ -211,25 +283,28 @@ describe("cloud-tasks-dispatcher", () => {
       process.env.CONVERSION_DISPATCHER = "inline";
       process.env.FIREBASE_ADMIN_MODE = "adc";
 
-      // Mock the conversion service and job store to avoid actual conversion.
-      const conversionMock = vi.fn().mockResolvedValue(undefined);
-      vi.doMock("../services/conversion-service.js", () => ({
+      const conversionPromise = new Promise<void>(() => {});
+      const conversionMock = vi.fn().mockReturnValue(conversionPromise);
+      vi.doMock("./conversion-service.js", () => ({
         convertJobToPdf: conversionMock,
       }));
 
-      // Mock getJob to return a job.
-      const { createJob } = await import("./job-store.js");
-      const job = await createJob({
+      const getJobMock = vi.fn().mockResolvedValue({
         jobId: "inline-test-001",
-        originalFileName: "test.hwp",
         sourcePath: "/tmp/test.hwp",
-        status: "queued",
-        progress: 60,
-        expiresAt: new Date(Date.now() + 3600000).toISOString(),
       });
+      vi.doMock("./job-store.js", () => ({
+        getJob: getJobMock,
+      }));
 
-      const result = await enqueueConversionJob(job.jobId);
+      const result = await enqueueConversionJob("inline-test-001");
+
       expect(result.mode).toBe("inline");
+      expect(getJobMock).toHaveBeenCalledWith("inline-test-001");
+      expect(conversionMock).toHaveBeenCalledWith({
+        jobId: "inline-test-001",
+        sourcePath: "/tmp/test.hwp",
+      });
     });
   });
 });

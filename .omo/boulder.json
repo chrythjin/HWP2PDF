@@ -1,129 +1,119 @@
 {
   "schema_version": 2,
-  "active_work_id": "hwp2pdf-review-fixes-eba999f9",
+  "active_work_id": "code-frontend-improvement-final-4d7852e3",
   "works": {
-    "hwp2pdf-review-fixes-eba999f9": {
-      "work_id": "hwp2pdf-review-fixes-eba999f9",
-      "active_plan": "C:\\NEW PRG\\HWP2PDF\\.omo\\plans\\hwp2pdf-review-fixes.md",
-      "plan_name": "hwp2pdf-review-fixes",
-      "status": "completed",
-      "started_at": "2026-06-30T08:44:54.223Z",
-      "updated_at": "2026-06-30T10:02:29.878Z",
+    "code-frontend-improvement-final-4d7852e3": {
+      "work_id": "code-frontend-improvement-final-4d7852e3",
+      "active_plan": "C:\\NEW PRG\\HWP2PDF\\.omo\\plans\\code-frontend-improvement-final.md",
+      "plan_name": "code-frontend-improvement-final",
+      "status": "active",
+      "started_at": "2026-07-12T02:47:58.014Z",
+      "updated_at": "2026-07-17T15:37:48.610Z",
       "session_ids": [
-        "opencode:ses_0e8d46a73ffeXvUg9GM44w8e6q"
+        "opencode:ses_0ae47bb1cffeSljy9Fopuwro0b",
+        "opencode:ses_0979f1ddbffedrnBF9XoibzqmM",
+        "opencode:ses_0928d383affeL8OHFqH16v66rh",
+        "opencode:ses_08ff7e18bffeSwhfarxovOa6rh",
+        "opencode:ses_08f45f75affegPgY588Cr5PMcT"
       ],
       "session_origins": {
-        "opencode:ses_0e8d46a73ffeXvUg9GM44w8e6q": "direct"
+        "opencode:ses_0ae47bb1cffeSljy9Fopuwro0b": "direct",
+        "opencode:ses_0979f1ddbffedrnBF9XoibzqmM": "direct",
+        "opencode:ses_0928d383affeL8OHFqH16v66rh": "direct",
+        "opencode:ses_08ff7e18bffeSwhfarxovOa6rh": "direct",
+        "opencode:ses_08f45f75affegPgY588Cr5PMcT": "direct"
       },
       "agent": "atlas",
       "task_sessions": {
         "final-wave:f1": {
           "task_key": "final-wave:f1",
           "task_label": "F1",
-          "task_title": "Plan compliance audit",
-          "session_id": "opencode:ses_0e808cc7dffel2YNVVULIzloKr",
+          "task_title": "**Plan compliance audit**",
+          "session_id": "opencode:ses_0a4139e8fffergZqfVQGAWKzK4",
           "agent": "Sisyphus-Junior",
-          "category": "unspecified-high",
-          "started_at": "2026-06-30T09:12:56.052Z",
+          "category": "",
+          "started_at": "2026-07-12T03:09:08.374Z",
           "status": "running",
-          "updated_at": "2026-06-30T10:00:37.781Z"
+          "updated_at": "2026-07-14T00:17:00.181Z"
         },
-        "final-wave:f4": {
-          "task_key": "final-wave:f4",
-          "task_label": "F4",
-          "task_title": "Scope fidelity",
-          "session_id": "opencode:ses_0e808c546ffeqjXLvC52VZfZo4",
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "target topology 표의 `Task creator identity`가 `api-dispatcher-sa`라고 되어 있는 오류를 고치십시오. API runtime caller (`api-public-sa` 또는 WIF)가 `createTask`를 호출하며 `api-dispatcher-sa`는 OIDC token subject입니다.",
+          "session_id": "opencode:ses_0966cead3ffe1yfABDmvLh00pV",
           "agent": "Sisyphus-Junior",
           "category": "unspecified-high",
-          "updated_at": "2026-06-30T09:59:59.482Z",
-          "started_at": "2026-06-30T09:59:59.482Z",
-          "status": "running"
-        },
-        "final-wave:f3": {
-          "task_key": "final-wave:f3",
-          "task_label": "F3",
-          "task_title": "Real manual QA",
-          "session_id": "opencode:ses_0e808c699ffelhUuRxCC3KFVg9",
-          "agent": "Sisyphus-Junior",
-          "category": "unspecified-high",
-          "updated_at": "2026-06-30T10:00:19.454Z",
-          "started_at": "2026-06-30T10:00:19.454Z",
-          "status": "running"
+          "started_at": "2026-07-12T08:41:04.174Z",
+          "status": "running",
+          "updated_at": "2026-07-16T06:51:07.955Z"
         },
         "final-wave:f2": {
           "task_key": "final-wave:f2",
           "task_label": "F2",
-          "task_title": "Code quality review",
-          "session_id": "opencode:ses_0e808c8acffejhxR7N7KR4ADn9",
+          "task_title": "**Code quality and security review**",
+          "session_id": "opencode:ses_097630bdfffevF2Ffibi9UYTuS",
           "agent": "Sisyphus-Junior",
-          "category": "unspecified-high",
-          "updated_at": "2026-06-30T10:00:40.854Z",
-          "started_at": "2026-06-30T10:00:40.854Z",
-          "status": "running"
+          "category": "",
+          "started_at": "2026-07-16T01:51:06.925Z",
+          "status": "running",
+          "updated_at": "2026-07-16T01:52:26.054Z"
         }
-      },
-      "ended_at": "2026-06-30T10:02:29.878Z",
-      "elapsed_ms": 4655655
+      }
     }
   },
-  "active_plan": "C:\\NEW PRG\\HWP2PDF\\.omo\\plans\\hwp2pdf-review-fixes.md",
-  "started_at": "2026-06-30T08:44:54.223Z",
-  "status": "completed",
-  "updated_at": "2026-06-30T10:02:29.878Z",
+  "active_plan": "C:\\NEW PRG\\HWP2PDF\\.omo\\plans\\code-frontend-improvement-final.md",
+  "started_at": "2026-07-12T02:47:58.014Z",
+  "status": "active",
+  "updated_at": "2026-07-17T15:37:48.610Z",
   "session_ids": [
-    "opencode:ses_0e8d46a73ffeXvUg9GM44w8e6q"
+    "opencode:ses_0ae47bb1cffeSljy9Fopuwro0b",
+    "opencode:ses_0979f1ddbffedrnBF9XoibzqmM",
+    "opencode:ses_0928d383affeL8OHFqH16v66rh",
+    "opencode:ses_08ff7e18bffeSwhfarxovOa6rh",
+    "opencode:ses_08f45f75affegPgY588Cr5PMcT"
   ],
   "session_origins": {
-    "opencode:ses_0e8d46a73ffeXvUg9GM44w8e6q": "direct"
+    "opencode:ses_0ae47bb1cffeSljy9Fopuwro0b": "direct",
+    "opencode:ses_0979f1ddbffedrnBF9XoibzqmM": "direct",
+    "opencode:ses_0928d383affeL8OHFqH16v66rh": "direct",
+    "opencode:ses_08ff7e18bffeSwhfarxovOa6rh": "direct",
+    "opencode:ses_08f45f75affegPgY588Cr5PMcT": "direct"
   },
-  "plan_name": "hwp2pdf-review-fixes",
+  "plan_name": "code-frontend-improvement-final",
   "task_sessions": {
     "final-wave:f1": {
       "task_key": "final-wave:f1",
       "task_label": "F1",
-      "task_title": "Plan compliance audit",
-      "session_id": "opencode:ses_0e808cc7dffel2YNVVULIzloKr",
+      "task_title": "**Plan compliance audit**",
+      "session_id": "opencode:ses_0a4139e8fffergZqfVQGAWKzK4",
       "agent": "Sisyphus-Junior",
-      "category": "unspecified-high",
-      "started_at": "2026-06-30T09:12:56.052Z",
+      "category": "",
+      "started_at": "2026-07-12T03:09:08.374Z",
       "status": "running",
-      "updated_at": "2026-06-30T10:00:37.781Z"
+      "updated_at": "2026-07-14T00:17:00.181Z"
     },
-    "final-wave:f4": {
-      "task_key": "final-wave:f4",
-      "task_label": "F4",
-      "task_title": "Scope fidelity",
-      "session_id": "opencode:ses_0e808c546ffeqjXLvC52VZfZo4",
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "target topology 표의 `Task creator identity`가 `api-dispatcher-sa`라고 되어 있는 오류를 고치십시오. API runtime caller (`api-public-sa` 또는 WIF)가 `createTask`를 호출하며 `api-dispatcher-sa`는 OIDC token subject입니다.",
+      "session_id": "opencode:ses_0966cead3ffe1yfABDmvLh00pV",
       "agent": "Sisyphus-Junior",
       "category": "unspecified-high",
-      "updated_at": "2026-06-30T09:59:59.482Z",
-      "started_at": "2026-06-30T09:59:59.482Z",
-      "status": "running"
-    },
-    "final-wave:f3": {
-      "task_key": "final-wave:f3",
-      "task_label": "F3",
-      "task_title": "Real manual QA",
-      "session_id": "opencode:ses_0e808c699ffelhUuRxCC3KFVg9",
-      "agent": "Sisyphus-Junior",
-      "category": "unspecified-high",
-      "updated_at": "2026-06-30T10:00:19.454Z",
-      "started_at": "2026-06-30T10:00:19.454Z",
-      "status": "running"
+      "started_at": "2026-07-12T08:41:04.174Z",
+      "status": "running",
+      "updated_at": "2026-07-16T06:51:07.955Z"
     },
     "final-wave:f2": {
       "task_key": "final-wave:f2",
       "task_label": "F2",
-      "task_title": "Code quality review",
-      "session_id": "opencode:ses_0e808c8acffejhxR7N7KR4ADn9",
+      "task_title": "**Code quality and security review**",
+      "session_id": "opencode:ses_097630bdfffevF2Ffibi9UYTuS",
       "agent": "Sisyphus-Junior",
-      "category": "unspecified-high",
-      "updated_at": "2026-06-30T10:00:40.854Z",
-      "started_at": "2026-06-30T10:00:40.854Z",
-      "status": "running"
+      "category": "",
+      "started_at": "2026-07-16T01:51:06.925Z",
+      "status": "running",
+      "updated_at": "2026-07-16T01:52:26.054Z"
     }
   },
-  "agent": "atlas",
-  "ended_at": "2026-06-30T10:02:29.878Z",
-  "elapsed_ms": 4655655
+  "agent": "atlas"
 }

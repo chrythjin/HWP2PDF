@@ -1,5 +1,6 @@
 const signedDownloadUrlTtlMinutes = Number(process.env.SIGNED_DOWNLOAD_URL_TTL_MINUTES ?? 15);
 const jobRetentionMinutes = Number(process.env.JOB_RETENTION_MINUTES ?? 30);
+const conversionTimeoutMs = Number(process.env.CONVERSION_TIMEOUT_MS ?? 240_000);
 
 /**
  * Firebase Admin initialization mode.
@@ -23,6 +24,9 @@ export const config = {
   uploadDirectory: process.env.UPLOAD_DIR ?? "tmp/uploads",
   resultDirectory: process.env.RESULT_DIR ?? "tmp/results",
   converterCommand: process.env.LIBREOFFICE_BIN ?? "soffice",
+  conversionTimeoutMs: Number.isFinite(conversionTimeoutMs) && conversionTimeoutMs > 0
+    ? conversionTimeoutMs
+    : 240_000,
   rateLimitWindowMs: 60 * 60 * 1000,
   rateLimitMax: 60,
   resultUrlBase: process.env.RESULT_URL_BASE ?? "http://localhost:8080/v1/results",
@@ -106,6 +110,8 @@ export const config = {
    * If not set, the worker accepts the standard Google issuer.
    */
   internalWorkerIssuer: process.env.INTERNAL_WORKER_ISSUER ?? "",
+  /** Run only the private converter route surface in a dedicated Cloud Run service. */
+  converterOnly: process.env.CONVERTER_ONLY === "true",
   /**
    * Stuck-job recovery threshold in minutes. Jobs stuck in "queued" or
    * "processing" for longer than this may be re-enqueued by a cleanup task.

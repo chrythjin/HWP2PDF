@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import fs from "node:fs/promises";
 import multer from "multer";
 import { ALLOWED_EXTENSIONS, MAX_FILE_SIZE, validateFile } from "@hwp2pdf/shared";
 import { ApiError } from "../utils/api-error.js";
@@ -37,9 +38,43 @@ export const uploadSingleHwp = multer({
   },
 }).single("file");
 
+const HWP_OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+export async function validateHwpFileSignature(filePath: string): Promise<boolean> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const header = Buffer.alloc(HWP_OLE_SIGNATURE.length);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    return bytesRead === header.length && header.equals(HWP_OLE_SIGNATURE);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function removeRejectedUpload(filePath: string): Promise<void> {
+  try {
+    await fs.rm(filePath, { force: true });
+  } catch {
+    console.error(JSON.stringify({ level: "error", event: "rejected_upload_cleanup_failed" }));
+  }
+}
+
 export function handleUploadMiddleware(request: Request, response: Response, next: NextFunction) {
-  uploadSingleHwp(request, response, (error) => {
+  uploadSingleHwp(request, response, async (error) => {
     if (!error) {
+      if (request.file) {
+        try {
+          if (!(await validateHwpFileSignature(request.file.path))) {
+            await removeRejectedUpload(request.file.path);
+            next(new ApiError(422, "invalid_file_signature", "올바른 HWP 파일이 아닙니다."));
+            return;
+          }
+        } catch (validationError) {
+          await removeRejectedUpload(request.file.path);
+          next(validationError);
+          return;
+        }
+      }
       next();
       return;
     }

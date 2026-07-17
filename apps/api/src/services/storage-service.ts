@@ -2,11 +2,14 @@ import fs from "node:fs/promises";
 import { Storage } from "@google-cloud/storage";
 import {
   ANONYMOUS_ACCESS_TOKEN_HEADER,
+  PUBLIC_CONVERSION_ERRORS,
+  normalizePublicConversionErrorCode,
+  type DownloadUnavailableReason,
   type JobStatusResponse,
   type UploadStatus,
 } from "@hwp2pdf/shared";
 import { config } from "../config.js";
-import type { JobRecord } from "./job-store.js";
+import { isDownloadExpired, type JobRecord } from "./job-store.js";
 import { verifyAccessTokenHash } from "../utils/token.js";
 import type { AuthenticatedUser } from "../middleware/auth.js";
 
@@ -156,6 +159,27 @@ export async function getProtectedDownloadUrl(job: JobRecord): Promise<string | 
   return downloadUrl;
 }
 
+export function getDownloadAvailability(job: JobRecord):
+  | { downloadAvailable: true }
+  | { downloadAvailable: false; downloadUnavailableReason: DownloadUnavailableReason } {
+  if (job.status === "deleted" || job.deletedAt) {
+    return { downloadAvailable: false, downloadUnavailableReason: "deleted" };
+  }
+  if (job.status === "failed") {
+    return { downloadAvailable: false, downloadUnavailableReason: "failed" };
+  }
+  if (job.status === "expired" || isDownloadExpired(job)) {
+    return { downloadAvailable: false, downloadUnavailableReason: "expired" };
+  }
+  if (job.status !== "completed") {
+    return { downloadAvailable: false, downloadUnavailableReason: "not_completed" };
+  }
+  if (!job.resultPath && !job.resultObjectPath) {
+    return { downloadAvailable: false, downloadUnavailableReason: "result_unavailable" };
+  }
+  return { downloadAvailable: true };
+}
+
 // ---------------------------------------------------------------------------
 // Status response builder (omits downloadUrl when unauthorized)
 // ---------------------------------------------------------------------------
@@ -173,23 +197,32 @@ export async function getStatusResponse(
   credentials?: OwnerCredentials,
 ): Promise<JobStatusResponse> {
   let downloadUrl: string | undefined;
+  const availability = getDownloadAvailability(job);
 
   if (verifier && credentials) {
     const result = verifier(credentials);
-    if (result.authorized) {
+    if (result.authorized && availability.downloadAvailable) {
       downloadUrl = await getProtectedDownloadUrl(job);
     }
   }
 
+  const errorCode = job.status === "failed"
+    ? normalizePublicConversionErrorCode(job.errorCode)
+    : undefined;
+
   return {
     jobId: job.jobId,
+    originalFileName: job.originalFileName,
     status: job.status as UploadStatus,
     progress: job.progress,
-    message: job.message,
+    message: errorCode ? PUBLIC_CONVERSION_ERRORS[errorCode].message : job.message,
+    errorCode,
     downloadUrl,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     expiresAt: job.expiresAt,
+    downloadExpiresAt: job.downloadExpiresAt,
+    ...availability,
   };
 }
 
@@ -218,6 +251,10 @@ async function deleteGcsObject(objectPath: string | undefined): Promise<void> {
       }),
     );
   }
+}
+
+export async function deleteExactStoredObject(objectPath: string): Promise<void> {
+  await deleteGcsObject(objectPath);
 }
 
 /**
@@ -328,11 +365,20 @@ export async function persistOriginalFile(input: {
 export async function downloadOriginalFile(input: {
   objectPath: string;
   localPath: string;
+  expectedFileSize?: number;
 }) {
   if (!shouldUseGcs()) return;
 
   try {
-    await getBucket().file(input.objectPath).download({
+    const file = getBucket().file(input.objectPath);
+    if (input.expectedFileSize !== undefined) {
+      const [metadata] = await file.getMetadata();
+      const actualSize = Number(metadata.size);
+      if (!Number.isSafeInteger(actualSize) || actualSize !== input.expectedFileSize) {
+        throw new Error(`GCS 객체 크기가 업로드 세션과 일치하지 않습니다. expected=${input.expectedFileSize}, actual=${metadata.size ?? "unknown"}`);
+      }
+    }
+    await file.download({
       destination: input.localPath,
     });
   } catch (error) {

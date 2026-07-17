@@ -60,6 +60,30 @@ export function validateBoardPostInput(input: {
   return null;
 }
 
+/** Validate only fields supplied by a PATCH request. */
+export function validateBoardPostPatch(input: {
+  title?: unknown;
+  body?: unknown;
+  category?: unknown;
+}): string | null {
+  if (input.title !== undefined) {
+    if (typeof input.title !== "string") return "게시판 제목을 입력하세요.";
+    if (input.title.trim().length === 0) return "게시판 제목을 입력하세요.";
+    if (input.title.length > TITLE_MAX_LENGTH) return `게시판 제목은 ${TITLE_MAX_LENGTH}자 이하여야 합니다.`;
+  }
+  if (input.body !== undefined) {
+    if (typeof input.body !== "string") return "게시판 내용을 입력하세요.";
+    if (input.body.trim().length === 0) return "게시판 내용을 입력하세요.";
+    if (input.body.length > BODY_MAX_LENGTH) return `게시판 내용은 ${BODY_MAX_LENGTH}자 이하여야 합니다.`;
+  }
+  if (input.category !== undefined) {
+    if (typeof input.category !== "string" || !BOARD_CATEGORIES.includes(input.category as BoardCategory)) {
+      return "게시판 카테고리는 general, qna, notice 중 하나여야 합니다.";
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // BoardStore interface
 // ---------------------------------------------------------------------------
@@ -310,33 +334,26 @@ class FirestoreBoardStore implements BoardStore {
     isModerator: boolean,
   ): Promise<BoardPostRecord | null> {
     const ref = this.collection.doc(id);
-    const snapshot = await ref.get();
-    if (!snapshot.exists) return null;
+    return this.firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return null;
 
-    const current = snapshot.data() as BoardPostRecord;
+      const current = snapshot.data() as BoardPostRecord;
+      const isOwner = current.authorId === authorId;
+      if (!isOwner && !isAdmin && !isModerator) return null;
+      if (current.category === "notice" && !isAdmin) return null;
+      if (input.category === "notice" && !isAdmin) return null;
 
-    const isOwner = current.authorId === authorId;
-    if (!isOwner && !isAdmin && !isModerator) return null;
-
-    // Notice posts can only be edited by admin (not owner, not moderator).
-    if (current.category === "notice" && !isAdmin) {
-      return null;
-    }
-
-    if (input.category === "notice" && !isAdmin) {
-      return null;
-    }
-
-    const updated: BoardPostRecord = {
-      ...current,
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.body !== undefined ? { body: input.body } : {}),
-      ...(input.category !== undefined ? { category: input.category } : {}),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await ref.set(updated);
-    return updated;
+      const updated: BoardPostRecord = {
+        ...current,
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.body !== undefined ? { body: input.body } : {}),
+        ...(input.category !== undefined ? { category: input.category } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      transaction.set(ref, updated);
+      return updated;
+    });
   }
 
   async deletePost(
@@ -346,21 +363,18 @@ class FirestoreBoardStore implements BoardStore {
     isModerator: boolean,
   ): Promise<boolean> {
     const ref = this.collection.doc(id);
-    const snapshot = await ref.get();
-    if (!snapshot.exists) return false;
+    return this.firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return false;
 
-    const current = snapshot.data() as BoardPostRecord;
+      const current = snapshot.data() as BoardPostRecord;
+      const isOwner = current.authorId === authorId;
+      if (!isOwner && !isAdmin && !isModerator) return false;
+      if (current.category === "notice" && !isAdmin) return false;
 
-    const isOwner = current.authorId === authorId;
-    if (!isOwner && !isAdmin && !isModerator) return false;
-
-    // Notice posts can only be deleted by admin (not owner, not moderator).
-    if (current.category === "notice" && !isAdmin) {
-      return false;
-    }
-
-    await ref.delete();
-    return true;
+      transaction.delete(ref);
+      return true;
+    });
   }
 }
 

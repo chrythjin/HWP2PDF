@@ -12,6 +12,7 @@ import {
   PROGRESS,
   type ApiErrorBody,
   type DirectUploadInitResponse,
+  type DownloadUnavailableReason,
   type JobStatusResponse,
   type UploadResponse,
   type UploadStatus,
@@ -40,6 +41,22 @@ function isActiveStatus(status: UploadStatus) {
 }
 
 /**
+ * Human-readable Korean status labels used for the live-region announcement
+ * and the progressbar aria-valuetext. Kept in one place so the screen-reader
+ * message and the visible label never drift apart.
+ */
+const STATUS_LABEL: Record<UploadStatus, string> = {
+  idle: "대기 중",
+  uploading: "파일 업로드 중",
+  queued: "변환 작업 대기 중",
+  processing: "PDF로 변환 중",
+  completed: "변환 완료",
+  failed: "변환 실패",
+  expired: "변환 만료",
+  deleted: "결과 삭제됨",
+};
+
+/**
  * Extended upload response shape that includes the anonymous access token
  * fields returned exactly once by the API for anonymous users.
  */
@@ -62,6 +79,8 @@ export default function DropzoneUploader() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadErrorMessage, setDownloadErrorMessage] = useState<string | null>(null);
+  const [downloadAvailable, setDownloadAvailable] = useState<boolean | undefined>(undefined);
+  const [downloadUnavailableReason, setDownloadUnavailableReason] = useState<DownloadUnavailableReason | undefined>(undefined);
   const uploadSessionRef = useRef(0);
 
   const handleReset = useCallback(() => {
@@ -76,6 +95,8 @@ export default function DropzoneUploader() {
     setJobId(null);
     setIsDownloading(false);
     setDownloadErrorMessage(null);
+    setDownloadAvailable(undefined);
+    setDownloadUnavailableReason(undefined);
   }, [jobId]);
 
   // Download the converted PDF through the authenticated fetch helper so
@@ -169,7 +190,20 @@ export default function DropzoneUploader() {
 
           if (job.status === "completed") {
             setProgress(100);
-            setErrorMessage(job.downloadUrl ? null : "다운로드 링크를 받지 못했습니다.");
+            setDownloadAvailable(job.downloadAvailable);
+            setDownloadUnavailableReason(job.downloadUnavailableReason);
+            // Legacy records (downloadAvailable undefined) with a downloadUrl
+            // are still downloadable. T1/T2 records use the server-computed
+            // downloadAvailable field — never derive it from status alone.
+            if (job.downloadAvailable === false) {
+              setErrorMessage(null);
+            } else if (job.downloadAvailable === true) {
+              setErrorMessage(null);
+            } else if (job.downloadUrl) {
+              setErrorMessage(null);
+            } else {
+              setErrorMessage("다운로드 링크를 받지 못했습니다.");
+            }
             return;
           }
 
@@ -404,9 +438,19 @@ export default function DropzoneUploader() {
 
   return (
     <div className="w-full max-w-xl mx-auto">
+      {/* Screen-reader live region: announces status transitions without
+          duplicating the visible label. aria-live=polite so it does not
+          interrupt the user. role=status is the WAI-ARIA polite live region. */}
+      <div role="status" aria-live="polite" className="sr-only" data-testid="upload-status-announcement">
+        {status !== "idle" ? `${STATUS_LABEL[status]}${progress > 0 && progress < 100 ? ` (${progress}%)` : ""}` : ""}
+      </div>
+
       {status === "idle" && (
         <div
-          {...getRootProps()}
+          {...getRootProps({
+            role: "button",
+            "aria-label": "HWP 파일 선택",
+          })}
           className={`relative overflow-hidden rounded-3xl border-2 border-dashed p-12 text-center transition-all duration-300 cursor-pointer
             ${
               isDragActive
@@ -423,6 +467,7 @@ export default function DropzoneUploader() {
                 viewBox="0 0 24 24"
                 stroke="currentColor"
                 strokeWidth={1.5}
+                aria-hidden="true"
               >
                 <path
                   strokeLinecap="round"
@@ -454,7 +499,7 @@ export default function DropzoneUploader() {
         <div className="p-8 rounded-3xl bg-white/40 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800 backdrop-blur-md shadow-xl">
           <div className="flex items-center space-x-4 mb-6">
             <div className="p-3 bg-blue-50 dark:bg-blue-950/30 text-blue-500 rounded-xl">
-              <svg className="w-6 h-6 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-6 h-6 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
             </div>
@@ -465,7 +510,16 @@ export default function DropzoneUploader() {
             <span className="text-sm font-medium text-blue-600 dark:text-blue-400">{progress}%</span>
           </div>
 
-          <div className="w-full bg-zinc-100 dark:bg-zinc-900 h-2.5 rounded-full overflow-hidden">
+          <div
+            role="progressbar"
+            aria-label="파일 업로드 진행률"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress}
+            aria-valuetext={`${progress}% 업로드됨`}
+            className="w-full bg-zinc-100 dark:bg-zinc-900 h-2.5 rounded-full overflow-hidden"
+            data-testid="upload-progressbar"
+          >
             <div
               className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-300 ease-out"
               style={{ width: `${progress}%` }}
@@ -478,7 +532,7 @@ export default function DropzoneUploader() {
         <div className="p-8 rounded-3xl bg-white/40 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800 backdrop-blur-md shadow-xl">
           <div className="flex items-center space-x-4 mb-6">
             <div className="p-3 bg-amber-50 dark:bg-amber-950/30 text-amber-500 rounded-xl relative">
-              <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M21 3v5h-5" />
               </svg>
             </div>
@@ -492,7 +546,16 @@ export default function DropzoneUploader() {
             <span className="text-sm font-medium text-amber-600 dark:text-amber-400">{progress}%</span>
           </div>
 
-          <div className="w-full bg-zinc-100 dark:bg-zinc-900 h-2.5 rounded-full overflow-hidden">
+          <div
+            role="progressbar"
+            aria-label={status === "queued" ? "변환 대기 진행률" : "PDF 변환 진행률"}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress}
+            aria-valuetext={`${progress}% ${status === "queued" ? "대기 중" : "변환 중"}`}
+            className="w-full bg-zinc-100 dark:bg-zinc-900 h-2.5 rounded-full overflow-hidden"
+            data-testid="conversion-progressbar"
+          >
             <div
               className="bg-gradient-to-r from-amber-500 to-orange-500 h-full rounded-full transition-all duration-300 ease-out"
               style={{ width: `${progress}%` }}
@@ -504,7 +567,7 @@ export default function DropzoneUploader() {
       {status === "completed" && (
         <div className="p-8 rounded-3xl bg-white/40 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800 backdrop-blur-md shadow-xl text-center space-y-6">
           <div className="inline-flex p-4 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500 rounded-full shadow-inner shadow-emerald-500/10">
-            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
           </div>
@@ -515,43 +578,69 @@ export default function DropzoneUploader() {
             <p className="text-xs text-zinc-400 dark:text-zinc-600 font-mono mt-1 truncate max-w-sm mx-auto">{file?.name.replace(/\.hwp$/i, ".pdf")}</p>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={isDownloading}
-              className="flex items-center justify-center space-x-2 px-6 py-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg hover:shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              <span>{isDownloading ? "다운로드 중..." : "PDF 다운로드"}</span>
-            </button>
+          {/* T1/T2 downloadAvailable contract:
+                - true  -> download button
+                - false -> unavailable message (expired/deleted/etc.)
+                - legacy undefined + downloadUrl -> download button (safe fallback) */}
+          {downloadAvailable === false ? (
+            <div className="space-y-4" data-testid="download-unavailable-message">
+              <p className="text-sm text-amber-600 dark:text-amber-400 font-medium">
+                {downloadUnavailableReason === "expired"
+                  ? "다운로드 기간이 만료되었습니다."
+                  : downloadUnavailableReason === "deleted"
+                    ? "결과 파일이 삭제되었습니다."
+                    : downloadUnavailableReason === "access_denied"
+                      ? "다운로드 권한이 없습니다."
+                      : "다운로드할 수 없는 결과입니다."}
+              </p>
+              <button
+                onClick={handleReset}
+                className="px-6 py-3 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors font-medium"
+              >
+                다른 파일 변환
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  className="flex items-center justify-center space-x-2 px-6 py-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium shadow-lg hover:shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  <span>{isDownloading ? "다운로드 중..." : "PDF 다운로드"}</span>
+                </button>
 
-            <button
-              onClick={handleReset}
-              className="px-6 py-3 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors font-medium"
-            >
-              다른 파일 변환
-            </button>
-          </div>
+                <button
+                  onClick={handleReset}
+                  className="px-6 py-3 rounded-full border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors font-medium"
+                >
+                  다른 파일 변환
+                </button>
+              </div>
 
-          {downloadErrorMessage && (
-            <p className="text-sm text-rose-500 font-medium" role="alert">
-              {downloadErrorMessage}
-            </p>
+              {downloadErrorMessage && (
+                <p className="text-sm text-rose-500 font-medium" role="alert">
+                  {downloadErrorMessage}
+                </p>
+              )}
+
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-600">
+                * 다운로드 링크는 보안을 위해 짧은 시간 동안만 유효하며, 변환 파일은 자동 삭제됩니다.
+              </p>
+            </>
           )}
-
-          <p className="text-[11px] text-zinc-400 dark:text-zinc-600">
-            * 다운로드 링크는 보안을 위해 짧은 시간 동안만 유효하며, 변환 파일은 자동 삭제됩니다.
-          </p>
         </div>
       )}
 
       {status === "failed" && (
         <div className="p-8 rounded-3xl bg-white/40 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800 backdrop-blur-md shadow-xl text-center space-y-6">
           <div className="inline-flex p-4 bg-rose-50 dark:bg-rose-950/30 text-rose-500 rounded-full">
-            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>

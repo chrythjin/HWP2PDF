@@ -440,4 +440,131 @@ describe("DropzoneUploader completed-state download", () => {
 
     expect(downloadProtectedFileMock).not.toHaveBeenCalled();
   });
+
+  // ---- completed-but-unavailable: downloadAvailable false -> no download button ----
+  it("completed job with downloadAvailable false shows unavailable message, not download button", async () => {
+    const jobId = "job-completed-unavailable";
+    // Override the poll response to return completed but downloadAvailable: false
+    fetchWithAuthMock.mockImplementation(async (route: string) => {
+      if (typeof route === "string" && route.includes("/uploads/initiate")) {
+        return new Response(
+          JSON.stringify({
+            jobId,
+            uploadUrl: "https://storage.googleapis.com/bucket/upload",
+            headers: { "Content-Type": "application/octet-stream" },
+            objectPath: `uploads/${jobId}/file.hwp`,
+            accessToken: ANON_TOKEN,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (typeof route === "string" && route.includes("/uploads/complete")) {
+        return new Response(
+          JSON.stringify({
+            jobId,
+            status: "queued",
+            accessToken: ANON_TOKEN,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (typeof route === "string" && route.includes("/jobs/")) {
+        return new Response(
+          JSON.stringify({
+            jobId,
+            status: "completed",
+            progress: 100,
+            downloadAvailable: false,
+            downloadUnavailableReason: "expired",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const { container } = render(<DropzoneUploader />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    // Should show completed state
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    // Download button must NOT be present when downloadAvailable is false
+    expect(screen.queryByRole("button", { name: /PDF 다운로드/ })).not.toBeInTheDocument();
+
+    // An unavailable message must be shown
+    expect(screen.getByTestId("download-unavailable-message")).toBeInTheDocument();
+
+    // The download helper must NOT have been called
+    expect(downloadProtectedFileMock).not.toHaveBeenCalled();
+  });
+
+  // ---- completed with downloadAvailable true -> download button present ----
+  it("completed job with downloadAvailable true shows download button", async () => {
+    const jobId = "job-completed-available";
+    fetchWithAuthMock.mockImplementation(async (route: string) => {
+      if (typeof route === "string" && route.includes("/uploads/initiate")) {
+        return new Response(
+          JSON.stringify({
+            jobId,
+            uploadUrl: "https://storage.googleapis.com/bucket/upload",
+            headers: { "Content-Type": "application/octet-stream" },
+            objectPath: `uploads/${jobId}/file.hwp`,
+            accessToken: ANON_TOKEN,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (typeof route === "string" && route.includes("/uploads/complete")) {
+        return new Response(
+          JSON.stringify({
+            jobId,
+            status: "queued",
+            accessToken: ANON_TOKEN,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (typeof route === "string" && route.includes("/jobs/")) {
+        return new Response(
+          JSON.stringify({
+            jobId,
+            status: "completed",
+            progress: 100,
+            downloadAvailable: true,
+            downloadUrl: `http://localhost:8080/v1/jobs/${jobId}/download`,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const { container } = render(<DropzoneUploader />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const testFile = new File(["hwp-content"], "test.hwp", { type: "application/x-hwp" });
+
+    await act(async () => {
+      fireEvent.drop(input, {
+        target: { files: [testFile] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("변환 완료!")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: /PDF 다운로드/ })).toBeInTheDocument();
+  });
 });
