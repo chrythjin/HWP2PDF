@@ -1,0 +1,685 @@
+import { describe, expect, it, beforeEach, vi } from "vitest";
+import {
+  FirestoreJobStore,
+  MemoryJobStore,
+  isMetadataExpired,
+  isDownloadExpired,
+  type JobRecord,
+  type UploadSessionRecord,
+} from "./job-store.js";
+import {
+  DEFAULT_DOWNLOAD_TTL_MS,
+  DEFAULT_METADATA_RETENTION_MS,
+  TOMBSTONE_RETENTION_MS,
+  UPLOAD_SESSION_TTL_MS,
+} from "@hwp2pdf/shared";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function baseUserJob(overrides: Partial<JobRecord> = {}): JobRecord {
+  const now = Date.now();
+  return {
+    jobId: "job-user-1",
+    originalFileName: "doc.hwp",
+    sourcePath: "tmp/uploads/doc.hwp",
+    status: "queued",
+    progress: 60,
+    expiresAt: new Date(now + DEFAULT_DOWNLOAD_TTL_MS).toISOString(),
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    ownerType: "user",
+    userId: "user-123",
+    downloadExpiresAt: new Date(now + DEFAULT_DOWNLOAD_TTL_MS).toISOString(),
+    metadataExpiresAt: new Date(now + DEFAULT_METADATA_RETENTION_MS).toISOString(),
+    ...overrides,
+  };
+}
+
+function baseAnonymousJob(overrides: Partial<JobRecord> = {}): JobRecord {
+  const now = Date.now();
+  return {
+    jobId: "job-anon-1",
+    originalFileName: "anon.hwp",
+    sourcePath: "tmp/uploads/anon.hwp",
+    status: "queued",
+    progress: 60,
+    expiresAt: new Date(now + DEFAULT_DOWNLOAD_TTL_MS).toISOString(),
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    ownerType: "anonymous",
+    accessTokenHash: "abc123hash",
+    downloadExpiresAt: new Date(now + DEFAULT_DOWNLOAD_TTL_MS).toISOString(),
+    metadataExpiresAt: new Date(now + DEFAULT_METADATA_RETENTION_MS).toISOString(),
+    ...overrides,
+  };
+}
+
+function baseUploadSession(overrides: Partial<UploadSessionRecord> = {}): UploadSessionRecord {
+  const now = Date.now();
+  return {
+    jobId: "job-session-1",
+    objectPath: "staging/job-session-1/anon.hwp",
+    fileName: "anon.hwp",
+    fileSize: 1024,
+    ownerType: "anonymous",
+    accessTokenHash: "hash-session",
+    expiresAt: new Date(now + UPLOAD_SESSION_TTL_MS).toISOString(),
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// MemoryJobStore — owner-aware behavior
+// ---------------------------------------------------------------------------
+
+describe("MemoryJobStore owner-aware behavior", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("creates and retrieves a user-owned job with userId", async () => {
+    const job = await store.createJob(baseUserJob());
+    expect(job.ownerType).toBe("user");
+    expect(job.userId).toBe("user-123");
+
+    const fetched = await store.getJob(job.jobId);
+    expect(fetched).toBeDefined();
+    expect(fetched?.userId).toBe("user-123");
+  });
+
+  it("creates and retrieves an anonymous job with accessTokenHash", async () => {
+    const job = await store.createJob(baseAnonymousJob());
+    expect(job.ownerType).toBe("anonymous");
+    expect(job.accessTokenHash).toBe("abc123hash");
+
+    const fetched = await store.getJob(job.jobId);
+    expect(fetched).toBeDefined();
+    expect(fetched?.accessTokenHash).toBe("abc123hash");
+  });
+
+  it("preserves old job compatibility (no ownerType)", async () => {
+    const now = Date.now();
+    const legacyJob: JobRecord = {
+      jobId: "legacy-1",
+      originalFileName: "legacy.hwp",
+      sourcePath: "tmp/uploads/legacy.hwp",
+      status: "completed",
+      progress: 100,
+      expiresAt: new Date(now + DEFAULT_DOWNLOAD_TTL_MS).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+      downloadUrl: "http://example.com/legacy.pdf",
+    };
+    const created = await store.createJob(legacyJob);
+    expect(created.ownerType).toBeUndefined();
+
+    const fetched = await store.getJob("legacy-1");
+    expect(fetched).toBeDefined();
+    expect(fetched?.downloadUrl).toBe("http://example.com/legacy.pdf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queued worker claim compare-and-set behavior
+// ---------------------------------------------------------------------------
+
+describe("worker queued claim compare-and-set", () => {
+  it("MemoryJobStore allows only one queued claim to succeed", async () => {
+    const store = new MemoryJobStore();
+    await store.createJob(baseUserJob({ jobId: "memory-claim-001", status: "queued", progress: 60 }));
+
+    const [first, second] = await Promise.all([
+      store.claimQueuedJobForProcessing("memory-claim-001"),
+      store.claimQueuedJobForProcessing("memory-claim-001"),
+    ]);
+
+    const results = [first.status, second.status];
+    expect(results).toContain("claimed");
+    expect(results).toContain("lock_lost");
+    expect(results.filter((status) => status === "claimed")).toHaveLength(1);
+
+    const claimed = first.status === "claimed" ? first.job : second.status === "claimed" ? second.job : undefined;
+    expect(claimed?.status).toBe("processing");
+    expect(claimed?.progress).toBe(70);
+  });
+
+  it("MemoryJobStore reports lock-lost when the queued job changes before mutation", async () => {
+    const store = new MemoryJobStore();
+    await store.createJob(baseUserJob({ jobId: "memory-lock-lost-001", status: "queued", progress: 60 }));
+
+    const result = await store.claimQueuedJobForProcessing("memory-lock-lost-001", async () => {
+      await store.updateJob("memory-lock-lost-001", { status: "processing", progress: 70 });
+    });
+
+    expect(result.status).toBe("lock_lost");
+    expect(result.current?.status).toBe("processing");
+  });
+
+  it("FirestoreJobStore uses a transaction so only one queued claim succeeds", async () => {
+    const job = baseUserJob({ jobId: "firestore-claim-001", status: "queued", progress: 60 });
+    const documentState: { current: JobRecord | undefined } = { current: job };
+    const writes: JobRecord[] = [];
+    const ref = { id: job.jobId };
+    const transaction = {
+      async get() {
+        return {
+          exists: documentState.current !== undefined,
+          data: () => documentState.current,
+        };
+      },
+      set(_ref: unknown, value: JobRecord) {
+        documentState.current = value;
+        writes.push(value);
+      },
+    };
+    const firestore = {
+      collection() {
+        return {
+          doc() {
+            return ref;
+          },
+        };
+      },
+      async runTransaction<T>(callback: (tx: typeof transaction) => Promise<T>) {
+        return callback(transaction);
+      },
+    };
+
+    const store = new FirestoreJobStore(firestore as never);
+
+    const first = await store.claimQueuedJobForProcessing("firestore-claim-001");
+    const second = await store.claimQueuedJobForProcessing("firestore-claim-001");
+
+    expect(first.status).toBe("claimed");
+    expect(second.status).toBe("already_processing");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].status).toBe("processing");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getJobForUser / getJobForAnonymous
+// ---------------------------------------------------------------------------
+
+describe("getJobForUser", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("returns job when userId matches", async () => {
+    await store.createJob(baseUserJob({ jobId: "j1", userId: "user-A" }));
+    const job = await store.getJobForUser("j1", "user-A");
+    expect(job).toBeDefined();
+    expect(job?.userId).toBe("user-A");
+  });
+
+  it("returns null when userId does not match", async () => {
+    await store.createJob(baseUserJob({ jobId: "j1", userId: "user-A" }));
+    const job = await store.getJobForUser("j1", "user-B");
+    expect(job).toBeNull();
+  });
+
+  it("returns null for anonymous-owned job", async () => {
+    await store.createJob(baseAnonymousJob({ jobId: "j1" }));
+    const job = await store.getJobForUser("j1", "user-A");
+    expect(job).toBeNull();
+  });
+
+  it("returns null when job does not exist", async () => {
+    const job = await store.getJobForUser("nonexistent", "user-A");
+    expect(job).toBeNull();
+  });
+
+  it("returns null for deleted (tombstoned) job", async () => {
+    await store.createJob(baseUserJob({ jobId: "j1", userId: "user-A" }));
+    await store.markJobDeleted("j1", "user-A");
+    const job = await store.getJobForUser("j1", "user-A");
+    expect(job).toBeNull();
+  });
+});
+
+describe("getJobForAnonymous", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("returns job when accessTokenHash matches", async () => {
+    await store.createJob(baseAnonymousJob({ jobId: "j1", accessTokenHash: "hash-X" }));
+    const job = await store.getJobForAnonymous("j1", "hash-X");
+    expect(job).toBeDefined();
+    expect(job?.accessTokenHash).toBe("hash-X");
+  });
+
+  it("returns null when accessTokenHash does not match", async () => {
+    await store.createJob(baseAnonymousJob({ jobId: "j1", accessTokenHash: "hash-X" }));
+    const job = await store.getJobForAnonymous("j1", "hash-Y");
+    expect(job).toBeNull();
+  });
+
+  it("returns null for user-owned job", async () => {
+    await store.createJob(baseUserJob({ jobId: "j1" }));
+    const job = await store.getJobForAnonymous("j1", "hash-X");
+    expect(job).toBeNull();
+  });
+
+  it("returns null for deleted (tombstoned) job", async () => {
+    await store.createJob(baseAnonymousJob({ jobId: "j1", accessTokenHash: "hash-X" }));
+    await store.markJobDeleted("j1", "system");
+    const job = await store.getJobForAnonymous("j1", "hash-X");
+    expect(job).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listJobsByUser
+// ---------------------------------------------------------------------------
+
+describe("listJobsByUser", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("returns only the specified user's jobs", async () => {
+    await store.createJob(baseUserJob({ jobId: "a1", userId: "user-A" }));
+    await store.createJob(baseUserJob({ jobId: "a2", userId: "user-A" }));
+    await store.createJob(baseUserJob({ jobId: "b1", userId: "user-B" }));
+
+    const jobs = await store.listJobsByUser("user-A");
+    expect(jobs).toHaveLength(2);
+    expect(jobs.every((j) => j.userId === "user-A")).toBe(true);
+  });
+
+  it("excludes deleted/tombstoned jobs by default", async () => {
+    await store.createJob(baseUserJob({ jobId: "a1", userId: "user-A" }));
+    await store.createJob(baseUserJob({ jobId: "a2", userId: "user-A" }));
+    await store.markJobDeleted("a1", "user-A");
+
+    const jobs = await store.listJobsByUser("user-A");
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].jobId).toBe("a2");
+  });
+
+  it("returns active tombstones to their owner only when includeDeleted=true", async () => {
+    await store.createJob(baseUserJob({ jobId: "a1", userId: "user-A" }));
+    await store.markJobDeleted("a1", "user-A");
+
+    const jobs = await store.listJobsByUser("user-A", { includeDeleted: true });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ jobId: "a1", ownerType: "user", userId: "user-A", status: "deleted" });
+  });
+
+  it("excludes anonymous jobs", async () => {
+    await store.createJob(baseUserJob({ jobId: "a1", userId: "user-A" }));
+    await store.createJob(baseAnonymousJob({ jobId: "x1" }));
+
+    const jobs = await store.listJobsByUser("user-A");
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].ownerType).toBe("user");
+  });
+
+  it("returns empty array for user with no jobs", async () => {
+    const jobs = await store.listJobsByUser("nobody");
+    expect(jobs).toEqual([]);
+  });
+
+  it("sorts by createdAt descending (newest first)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 1, 0, 0, 0));
+    await store.createJob(baseUserJob({ jobId: "old", userId: "user-A" }));
+
+    vi.setSystemTime(new Date(2026, 0, 1, 0, 0, 5));
+    await store.createJob(baseUserJob({ jobId: "new", userId: "user-A" }));
+
+    vi.useRealTimers();
+
+    const jobs = await store.listJobsByUser("user-A");
+    expect(jobs[0].jobId).toBe("new");
+    expect(jobs[1].jobId).toBe("old");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// markJobDeleted
+// ---------------------------------------------------------------------------
+
+describe("markJobDeleted", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("stores only privacy-safe tombstone fields", async () => {
+    await store.createJob(
+      baseUserJob({
+        jobId: "j1",
+        userId: "user-A",
+        originalFileName: "secret.hwp",
+        sourcePath: "tmp/uploads/secret.hwp",
+        resultPath: "tmp/results/secret.pdf",
+        originalObjectPath: "originals/j1/secret.hwp",
+        resultObjectPath: "results/j1/secret.pdf",
+        downloadUrl: "http://x.pdf",
+        accessTokenHash: "hash-that-must-not-survive",
+        message: "private failure detail",
+      }),
+    );
+    const before = Date.now();
+    const deleted = await store.markJobDeleted("j1", "user-A");
+    const after = Date.now();
+
+    expect(deleted).toBeDefined();
+    expect(deleted).toEqual(
+      expect.objectContaining({
+        jobId: "j1",
+        originalFileName: "[deleted]",
+        sourcePath: "[deleted]",
+        status: "deleted",
+        progress: 0,
+        deletedBy: "user-A",
+      }),
+    );
+    expect(deleted?.status).toBe("deleted");
+    expect(deleted?.deletedAt).toBeDefined();
+    expect(deleted?.deletedBy).toBe("user-A");
+    expect(deleted?.tombstoneUntil).toBeDefined();
+    expect(deleted?.createdAt).toBeDefined();
+    expect(deleted?.updatedAt).toBe(deleted?.deletedAt);
+    expect(deleted?.expiresAt).toBeDefined();
+    expect(deleted?.downloadUrl).toBeUndefined();
+    expect(deleted?.resultPath).toBeUndefined();
+    expect(deleted?.resultObjectPath).toBeUndefined();
+    expect(deleted?.originalObjectPath).toBeUndefined();
+    expect(deleted?.ownerType).toBe("user");
+    expect(deleted?.userId).toBe("user-A");
+    expect(deleted?.accessTokenHash).toBeUndefined();
+    expect(deleted?.downloadExpiresAt).toBeUndefined();
+    expect(deleted?.metadataExpiresAt).toBeDefined();
+    expect(deleted?.message).toBeUndefined();
+    expect(Object.keys(deleted!).sort()).toEqual([
+      "createdAt",
+      "deletedAt",
+      "deletedBy",
+      "expiresAt",
+      "jobId",
+      "metadataExpiresAt",
+      "originalFileName",
+      "ownerType",
+      "progress",
+      "sourcePath",
+      "status",
+      "tombstoneUntil",
+      "updatedAt",
+      "userId",
+    ]);
+
+    const deletedAtMs = Date.parse(deleted!.deletedAt!);
+    expect(deletedAtMs).toBeGreaterThanOrEqual(before);
+    expect(deletedAtMs).toBeLessThanOrEqual(after);
+
+    const tombstoneMs = Date.parse(deleted!.tombstoneUntil!);
+    expect(tombstoneMs - deletedAtMs).toBe(TOMBSTONE_RETENTION_MS);
+  });
+
+  it("returns null when job does not exist", async () => {
+    const result = await store.markJobDeleted("nonexistent", "user-A");
+    expect(result).toBeNull();
+  });
+
+  it("is idempotent — repeated delete succeeds and updates deletedAt", async () => {
+    await store.createJob(baseUserJob({ jobId: "j1", userId: "user-A" }));
+    const first = await store.markJobDeleted("j1", "user-A");
+    expect(first?.status).toBe("deleted");
+
+    // Second delete should not throw and should remain deleted.
+    const second = await store.markJobDeleted("j1", "user-A");
+    expect(second?.status).toBe("deleted");
+    expect(second?.deletedAt).toBeDefined();
+  });
+
+  it("worker no-op on deleted job — updateJob does not resurrect a deleted job", async () => {
+    await store.createJob(baseUserJob({ jobId: "j1", userId: "user-A" }));
+    await store.markJobDeleted("j1", "user-A");
+
+    // Simulate a worker calling updateJob after deletion.
+    const updated = await store.updateJob("j1", {
+      status: "completed",
+      progress: 100,
+      downloadUrl: "http://late.pdf",
+    });
+
+    // The worker update should not resurrect the job from deleted state.
+    expect(updated?.status).toBe("deleted");
+    expect(updated?.downloadUrl).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Expired download auto-clear
+// ---------------------------------------------------------------------------
+
+describe("expired download auto-clear", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("getJob auto-transitions to expired and clears downloadUrl when downloadExpiresAt passes", async () => {
+    const past = new Date(Date.now() - 1000).toISOString();
+    await store.createJob(
+      baseUserJob({
+        jobId: "j1",
+        status: "completed",
+        progress: 100,
+        downloadUrl: "http://old.pdf",
+        downloadExpiresAt: past,
+        expiresAt: past,
+      }),
+    );
+
+    const job = await store.getJob("j1");
+    expect(job?.status).toBe("expired");
+    expect(job?.downloadUrl).toBeUndefined();
+  });
+
+  it("getJob does not expire a job whose downloadExpiresAt is in the future", async () => {
+    const future = new Date(Date.now() + DEFAULT_DOWNLOAD_TTL_MS).toISOString();
+    await store.createJob(
+      baseUserJob({
+        jobId: "j1",
+        status: "completed",
+        progress: 100,
+        downloadUrl: "http://ok.pdf",
+        downloadExpiresAt: future,
+        expiresAt: future,
+      }),
+    );
+
+    const job = await store.getJob("j1");
+    expect(job?.status).toBe("completed");
+    expect(job?.downloadUrl).toBe("http://ok.pdf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UploadSession CRUD
+// ---------------------------------------------------------------------------
+
+describe("UploadSession CRUD", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("creates and retrieves an upload session by jobId", async () => {
+    const session = await store.createUploadSession(baseUploadSession());
+    expect(session.jobId).toBe("job-session-1");
+
+    const fetched = await store.getUploadSession("job-session-1");
+    expect(fetched).toBeDefined();
+    expect(fetched?.accessTokenHash).toBe("hash-session");
+  });
+
+  it("returns null when session does not exist", async () => {
+    const fetched = await store.getUploadSession("nonexistent");
+    expect(fetched).toBeNull();
+  });
+
+  it("completeUploadSession sets completedAt and merges updates", async () => {
+    await store.createUploadSession(baseUploadSession());
+    const completed = await store.completeUploadSession("job-session-1", {
+      fileName: "renamed.hwp",
+    });
+    expect(completed).toBeDefined();
+    expect(completed?.completedAt).toBeDefined();
+    expect(completed?.fileName).toBe("renamed.hwp");
+  });
+
+  it("completeUploadSession returns null when session does not exist", async () => {
+    const result = await store.completeUploadSession("nonexistent");
+    expect(result).toBeNull();
+  });
+
+  it("UploadSession mismatch — getUploadSession returns null for wrong jobId", async () => {
+    await store.createUploadSession(baseUploadSession({ jobId: "real-job" }));
+    const fetched = await store.getUploadSession("wrong-job");
+    expect(fetched).toBeNull();
+  });
+
+  it("uploadSessions map is separate from jobs map", async () => {
+    // A job and a session can share the same jobId without colliding.
+    await store.createJob(baseUserJob({ jobId: "shared-id", userId: "user-A" }));
+    await store.createUploadSession(baseUploadSession({ jobId: "shared-id", ownerType: "user", userId: "user-A" }));
+
+    const job = await store.getJob("shared-id");
+    const session = await store.getUploadSession("shared-id");
+    expect(job).toBeDefined();
+    expect(session).toBeDefined();
+    expect(job?.originalFileName).toBe("doc.hwp");
+    expect(session?.fileName).toBe("anon.hwp");
+  });
+
+  it("expireUploadSessions removes sessions that have expired before the given time", async () => {
+    const past = new Date(Date.now() - 1000).toISOString();
+    const future = new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString();
+
+    await store.createUploadSession(baseUploadSession({ jobId: "expired-1", expiresAt: past }));
+    await store.createUploadSession(baseUploadSession({ jobId: "active-1", expiresAt: future }));
+
+    const removed = await store.expireUploadSessions();
+    expect(removed).toBeGreaterThanOrEqual(1);
+
+    const expired = await store.getUploadSession("expired-1");
+    const active = await store.getUploadSession("active-1");
+    expect(expired).toBeNull();
+    expect(active).toBeDefined();
+  });
+
+  it("expireUploadSessions with explicit before parameter", async () => {
+    const t0 = Date.now();
+    await store.createUploadSession(
+      baseUploadSession({ jobId: "s1", expiresAt: new Date(t0 + 10000).toISOString() }),
+    );
+
+    // before = now should not remove s1 (expires in future relative to now)
+    const removed1 = await store.expireUploadSessions(new Date(t0));
+    expect(removed1).toBe(0);
+
+    // before = t0 + 20000 should remove s1
+    const removed2 = await store.expireUploadSessions(new Date(t0 + 20000));
+    expect(removed2).toBe(1);
+    const fetched = await store.getUploadSession("s1");
+    expect(fetched).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+describe("isMetadataExpired", () => {
+  it("returns false when metadataExpiresAt is in the future", () => {
+    const job = baseUserJob({ metadataExpiresAt: new Date(Date.now() + 1000).toISOString() });
+    expect(isMetadataExpired(job)).toBe(false);
+  });
+
+  it("returns true when metadataExpiresAt is in the past", () => {
+    const job = baseUserJob({ metadataExpiresAt: new Date(Date.now() - 1000).toISOString() });
+    expect(isMetadataExpired(job)).toBe(true);
+  });
+
+  it("returns false when metadataExpiresAt is undefined (legacy job)", () => {
+    const job = baseUserJob();
+    delete (job as Partial<JobRecord>).metadataExpiresAt;
+    expect(isMetadataExpired(job)).toBe(false);
+  });
+});
+
+describe("isDownloadExpired", () => {
+  it("returns false when downloadExpiresAt is in the future", () => {
+    const job = baseUserJob({ downloadExpiresAt: new Date(Date.now() + 1000).toISOString() });
+    expect(isDownloadExpired(job)).toBe(false);
+  });
+
+  it("returns true when downloadExpiresAt is in the past", () => {
+    const job = baseUserJob({ downloadExpiresAt: new Date(Date.now() - 1000).toISOString() });
+    expect(isDownloadExpired(job)).toBe(true);
+  });
+
+  it("falls back to expiresAt when downloadExpiresAt is undefined", () => {
+    const job = baseUserJob({ expiresAt: new Date(Date.now() - 1000).toISOString() });
+    delete (job as Partial<JobRecord>).downloadExpiresAt;
+    expect(isDownloadExpired(job)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tombstone filtering in listJobsByUser
+// ---------------------------------------------------------------------------
+
+describe("tombstone filtering", () => {
+  let store: MemoryJobStore;
+
+  beforeEach(() => {
+    store = new MemoryJobStore();
+  });
+
+  it("listJobsByUser excludes jobs whose tombstoneUntil has passed (purged)", async () => {
+    // A job deleted long ago whose tombstone has expired.
+    const past = new Date(Date.now() - TOMBSTONE_RETENTION_MS - 1000).toISOString();
+    await store.createJob(
+      baseUserJob({
+        jobId: "old-deleted",
+        userId: "user-A",
+        status: "deleted",
+        deletedAt: past,
+        deletedBy: "user-A",
+        tombstoneUntil: past,
+      }),
+    );
+
+    const jobs = await store.listJobsByUser("user-A", { includeDeleted: true });
+    // Even with includeDeleted, a purged tombstone (tombstoneUntil passed) should be excluded.
+    expect(jobs.find((j) => j.jobId === "old-deleted")).toBeUndefined();
+  });
+
+  it("listJobsByUser returns active tombstones when includeDeleted=true", async () => {
+    await store.createJob(baseUserJob({ jobId: "j1", userId: "user-A" }));
+    await store.markJobDeleted("j1", "user-A");
+
+    const jobs = await store.listJobsByUser("user-A", { includeDeleted: true });
+    expect(jobs.find((j) => j.jobId === "j1")).toMatchObject({ status: "deleted", userId: "user-A" });
+  });
+});

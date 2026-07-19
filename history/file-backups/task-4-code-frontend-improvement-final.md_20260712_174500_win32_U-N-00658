@@ -1,0 +1,58 @@
+# T4 Evidence — transaction-safe maintenance primitives
+
+## RED / GREEN
+- RED: `pnpm --filter api test -- job-store.maintenance.test.ts`
+  - 1 file failed, 4/4 tests failed because maintenance methods did not exist.
+- Intermediate GREEN probe exposed a fixture timestamp issue, then a real worker-refresh race boundary issue; fixtures were corrected without weakening assertions.
+- GREEN: `pnpm --filter api test -- job-store.maintenance.test.ts job-store.auth.test.ts cloud-tasks-dispatcher.test.ts`
+  - 3 files passed, 66/66 tests passed.
+
+## Transaction evidence
+- Mocked Firestore query returns a stale document, but `recoverStaleProcessingJobs` re-reads it through `runTransaction` before conditionally writing.
+- First invocation transitions `processing -> queued`; repeated invocation returns no candidate, demonstrating one-time re-enqueue eligibility.
+- Memory race hook refreshes a worker timestamp after cutoff; maintenance returns no recovery candidate and preserves `processing`.
+
+## UltraQA probes
+- Exclusions: queued/current processing and completed jobs remain untouched; only stale processing jobs are returned.
+- Bounded traversal: `limit=1` plus cursor yields one candidate per page and repeated invocation returns none.
+- Cleanup safety: foreign objectPath and foreign owner are rejected; matching expired candidate claims once; second claim is null.
+- Existing upload session tests now assert terminal expired state rather than destructive removal.
+
+## Cleanup and limitations
+- No endpoint, Scheduler, IAM, deploy, plan checkbox, Boulder, commit, or push was added.
+- No live Firestore emulator/production or Cloud Tasks claim is made. Memory is process-local; mocked Firestore proves callback re-read semantics but not Google service conflict retry behavior.
+- agent-lsp daemon did not start within 10 seconds, so CodeGraph blast radius plus Serena symbol/reference analysis was used and recorded as the required fallback.
+
+## Final verification
+- `pnpm --filter api test`: 14 files passed, 297/297 tests passed.
+- `pnpm --filter api build`: TypeScript `tsc` exited 0.
+- LSP diagnostics: no diagnostics in `job-store.ts`, maintenance tests, dispatcher, or storage service.
+- `ocr review -audience agent` was attempted but all 22 reviews failed because the local LLM/API configuration was unavailable; no review-success claim is made.
+- Firestore queries now use bounded `limit` and stable composite cursors (`timestamp + documentId`). Required composite index/emulator validation remains environment-level work; no index/deployment change was made in T4.
+
+## 2026-07-12 T4 correction — transaction/cursor/candidate safety
+
+### RED / GREEN commands
+- Baseline: `pnpm --filter api test -- job-store.maintenance.test.ts` → 1 file, 4/4 passed.
+- RED after adding correction regressions: same command → 1 file failed, 2 failed / 7 passed.
+  - `uses an opaque cursor for separator-like ids and rejects malformed cursors` exposed the raw `timestamp|id` cursor and malformed-cursor acceptance.
+  - `revalidates exact upload ownership and path before emitting a cleanup candidate` exposed scan-to-transaction owner/objectPath mutation authorization.
+- GREEN: same focused command → 1 file, 9/9 passed.
+- Final: `pnpm --filter api test` → 14 files, 302/302 passed; focused maintenance file ran 9/9 inside the full suite.
+- `pnpm --filter api typecheck` and `pnpm --filter api build` → both exited 0.
+
+### Corrected behavior and tests
+- Recovery remains bounded by `limit` and returns all successful candidates in that batch; `recovers a bounded batch instead of collapsing maintenance to one item` asserts two results from a three-item set.
+- Firestore transaction re-read now requires `processing`, `updatedAt < cutoff`, and exact equality with the scanned `updatedAt`; `does not recover a job refreshed between scan and transaction` covers worker refresh.
+- Maintenance cursor is a versioned base64url JSON tuple `[1, timestamp, documentId]`; separator-like IDs round-trip and malformed/unknown shapes throw `Invalid maintenance cursor`.
+- Pagination continuation is based on the last scanned candidate, including a transaction-rejected candidate; `advances from a transaction-rejected page without skipping or repeating the next candidate` covers the page boundary.
+- Upload-session expiry transaction compares scan/current `jobId`, exact `objectPath`, owner discriminator and identity, and `expiresAt` in addition to incomplete/non-expired/cutoff criteria before emitting a deletion candidate.
+- Existing one-time `claimExpiredUploadObject` remains the final atomic claim. Repeated expiry returns no candidate, repeated claim returns null, and foreign path/owner are rejected.
+- Current, completed, and deleted jobs are asserted unchanged.
+
+### Diagnostics, limitations, cleanup receipt
+- LSP diagnostics: no diagnostics in `apps/api/src/services/job-store.ts` or `apps/api/src/services/job-store.maintenance.test.ts`.
+- Required `agent-lsp_blast_radius` was attempted after `start_lsp`, but the daemon did not initialize within 10 seconds; CodeGraph supplied source/call-path blast radius and built-in TypeScript LSP supplied clean diagnostics.
+- `ocr review -audience agent` was attempted; all 22 reviews failed due to unavailable local LLM/API configuration. No review-success claim is made.
+- No live Firestore emulator/production or Cloud Tasks integration claim is made. Mock transactions prove callback re-read conditions, not Google service conflict retries.
+- Cleanup receipt: no endpoint, Scheduler/IAM/deployment resource, storage deletion call, public DTO, frontend/shared contract, Cloud Tasks worker API, plan checkbox, dependency, commit, or push was changed. Required source/test/evidence backups were created under `history/file-backups/` before edits.

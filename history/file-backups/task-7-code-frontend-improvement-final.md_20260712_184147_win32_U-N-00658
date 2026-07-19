@@ -1,0 +1,68 @@
+# T7: 모바일 회원 내비게이션과 업로드 상태 접근성 개선 — Evidence
+
+## Task
+- 모바일(375px) 인증 사용자를 위한 키보드 조작 가능한 내비게이션 메뉴 추가
+- 업로드/변환 진행 상태의 progressbar 및 live-region 시맨틱 추가
+- 장식용 SVG를 assistive technology에서 숨김
+
+## Files Modified
+1. `apps/web/src/components/PageLayout.tsx` — MobileNav import 및 헤더에 배치, 데스크톱 nav에 aria-label 추가, 로고 SVG aria-hidden
+2. `apps/web/src/components/MobileNav.tsx` — **신규 파일**: 모바일 햄버거 메뉴 (키보드/Escape/포커스 트랩/aria-current)
+3. `apps/web/src/components/DropzoneUploader.tsx` — STATUS_LABEL 맵, live region(role=status, aria-live=polite), progressbar role + aria 속성, 모든 장식용 SVG aria-hidden
+4. `apps/web/src/components/MobileNav.test.tsx` — **신규 파일**: 14개 테스트 (키보드, 포커스 복원, aria-current, 포커스 트랩, Escape)
+5. `apps/web/src/components/DropzoneUploader.a11y.test.tsx` — **신규 파일**: 9개 테스트 (live region, SVG aria-hidden, progressbar 부재)
+6. `apps/web/src/app/board/board-page.test.tsx` — next/navigation mock에 usePathname 추가
+7. `apps/web/src/app/history/history-page.test.tsx` — next/navigation mock에 usePathname 추가
+
+## Implementation Details
+
+### MobileNav.tsx
+- 인증된 사용자에게만 렌더링 (`loading || !user` → null)
+- `usePathname`으로 현재 라우트 감지, `aria-current="page"` 설정
+- 트리거 버튼: `aria-expanded`, `aria-controls`, `aria-haspopup="menu"`, 토글 라벨
+- 패널: `role="menu"`, `aria-label`, Tab 트랩, Escape 닫기
+- 포커스 복원: 패널 닫힘 시 트리거로 포커스 복원 (`useEffect` + `wasOpenRef`)
+- 링크 클릭 시 패널 닫기 (`onClick={closePanel}`) — `react-hooks/set-state-in-effect` lint 규칙 회피
+
+### DropzoneUploader.tsx 접근성
+- `STATUS_LABEL: Record<UploadStatus, string>` — 8개 상태(idle/uploading/queued/processing/completed/failed/expired/deleted) 한국어 라벨
+- Live region: `<div role="status" aria-live="polite" className="sr-only">` — 상태 전환 시 스크린 리더에 알림
+- Progressbar: `role="progressbar"`, `aria-valuemin={0}`, `aria-valuemax={100}`, `aria-valuenow={progress}`, `aria-valuetext` — uploading/queued/processing 상태
+- 장식용 SVG: 모든 SVG에 `aria-hidden="true"` 추가 (idle/uploading/queued/completed/failed 상태)
+
+## Verification Results
+
+### Unit Tests
+- MobileNav.test.tsx: 14/14 PASS
+- DropzoneUploader.a11y.test.tsx: 9/9 PASS
+- 전체 웹 테스트: 126/126 PASS (11 test files)
+
+### Lint / Typecheck / Build
+- `pnpm --filter web lint`: clean (0 errors)
+- `pnpm --filter web typecheck`: clean (0 errors)
+- `pnpm --filter web build`: success (12/12 static pages generated)
+
+### Browser QA (Playwright, headless Chromium)
+| Viewport | Mobile Nav Trigger | Live Region | SVGs (aria-hidden/total) | Progressbar (idle) | Desktop Nav |
+|---|---|---|---|---|---|
+| 375x812 | hidden (anonymous) | present | 2/6 | 0 | hidden |
+| 768x1024 | hidden (anonymous) | present | 2/6 | 0 | visible |
+| 1280x800 | hidden (anonymous) | present | 2/6 | 0 | visible |
+
+- 익명 사용자에서 모바일 내비게이션 트리거가 보이지 않는 것은 정상 동작 (인증 필요)
+- 6개 SVG 중 2개 aria-hidden: PageLayout 로고 + DropzoneUploader idle 아이콘
+- 나머지 4개 SVG는 홈페이지 피처 섹션 아이콘 (T7 범위 밖)
+- 인증된 사용자의 모바일 내비게이션 동작은 단위 테스트(MobileNav.test.tsx 14/14)로 검증
+
+### Screenshots
+- `mobile-375-home-anonymous.png`
+- `tablet-768-home-anonymous.png`
+- `desktop-1280-home-anonymous.png`
+- `browser-qa-results.json`
+
+## Backups
+- `history/file-backups/PageLayout.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/AuthNav.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/DropzoneUploader.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/board-page.test.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/history-page.test.tsx_20260712_180423_win32_U-N-00658`

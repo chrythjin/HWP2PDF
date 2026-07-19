@@ -1,0 +1,738 @@
+# Learnings
+
+## 2026-07-17 T11
+- Private converter cutover must fail before cloud mutation when the selected Direct VPC egress contract cannot be observed: an `Internal` ingress setting does not prove outbound restriction, so Compute API, Private Google Access, an enabled tagged egress-deny rule covering `0.0.0.0/0`, and NAT scope must be preflighted.
+- Converter worker authorization is a strict OIDC triple match: the issuer must be present as well as equal, and converter target dispatch requires a distinct non-empty target URL and audience; `legacy` and `inline` remain separate rollback levers.
+
+- 2026-07-13 T10: Cloud Run을 private boundary("Ingress: Internal-Only")로 분리하면, external ingress flow는 차단되지만 Cloud Tasks HTTP target OIDC dispatch 및 VPC 내부 components의 
+un.app endpoint 호출은 Google 내부망을 타고 정상 동작한다.
+- 2026-07-13 T10: LibreOffice와 nanum/noto 한글 글꼴, H2Orestart extension이 설치된 고용량의 컨테이너를 public API 핸들러(pi-public)와 물리적으로 isolation하여, API request cycle 경쟁을 예방하고 RCE(Remote Code Execution) 잠재 공격 표면을 차단한다.
+- 2026-07-13 T10: separation 후에도 운영 장애 및 rollout preflight latency를 방어하기 위해 기존 public API 내부에 CONVERSION_DISPATCHER=inline fallback 코드를 완전히 보존하여 즉각적 zero-downtime rollback target을 확보해야 한다.
+
+- 2026-07-12 T1: `JobStatusResponse`의 기존 `message`/`downloadExpiresAt`를 유지하면서 optional `errorCode`, `downloadAvailable`, `downloadUnavailableReason`을 추가하면 현재 API producer와 web consumer를 깨지 않고 T2/T3가 단계적으로 이행할 수 있다.
+- 2026-07-13 T10: Cloud Run을 private boundary("Ingress: Internal-Only")로 분리하면, external ingress flow는 차단되지만 Cloud Tasks HTTP target OIDC dispatch 및 VPC 내부 components의 
+un.app endpoint 호출은 Google 내부망을 타고 정상 동작한다.
+- 2026-07-13 T10: LibreOffice와 nanum/noto 한글 글꼴, H2Orestart extension이 설치된 고용량의 컨테이너를 public API 핸들러(pi-public)와 물리적으로 isolation하여, API request cycle 경쟁을 예방하고 RCE(Remote Code Execution) 잠재 공격 표면을 차단한다.
+- 2026-07-13 T10: separation 후에도 운영 장애 및 rollout preflight latency를 방어하기 위해 기존 public API 내부에 CONVERSION_DISPATCHER=inline fallback 코드를 완전히 보존하여 즉각적 zero-downtime rollback target을 확보해야 한다.
+
+- 2026-07-12 T1: 공개 오류는 readonly 코드 목록에서 union을 유도하고 `Record<Code, Detail>`로 한국어 메시지와 retryable/terminal 분류의 완전성을 컴파일 시점에 강제한다.
+- 2026-07-13 T10: Cloud Run을 private boundary("Ingress: Internal-Only")로 분리하면, external ingress flow는 차단되지만 Cloud Tasks HTTP target OIDC dispatch 및 VPC 내부 components의 
+un.app endpoint 호출은 Google 내부망을 타고 정상 동작한다.
+- 2026-07-13 T10: LibreOffice와 nanum/noto 한글 글꼴, H2Orestart extension이 설치된 고용량의 컨테이너를 public API 핸들러(pi-public)와 물리적으로 isolation하여, API request cycle 경쟁을 예방하고 RCE(Remote Code Execution) 잠재 공격 표면을 차단한다.
+- 2026-07-13 T10: separation 후에도 운영 장애 및 rollout preflight latency를 방어하기 위해 기존 public API 내부에 CONVERSION_DISPATCHER=inline fallback 코드를 완전히 보존하여 즉각적 zero-downtime rollback target을 확보해야 한다.
+
+- 2026-07-12 T1: 외부 unknown 오류/사유는 원문을 보존하지 않고 각각 `conversion_failed`/`result_unavailable`로 축약해야 경로, 명령, URL, 토큰, raw exception 누출을 막을 수 있다.
+- 2026-07-13 T10: Cloud Run을 private boundary("Ingress: Internal-Only")로 분리하면, external ingress flow는 차단되지만 Cloud Tasks HTTP target OIDC dispatch 및 VPC 내부 components의 
+un.app endpoint 호출은 Google 내부망을 타고 정상 동작한다.
+- 2026-07-13 T10: LibreOffice와 nanum/noto 한글 글꼴, H2Orestart extension이 설치된 고용량의 컨테이너를 public API 핸들러(pi-public)와 물리적으로 isolation하여, API request cycle 경쟁을 예방하고 RCE(Remote Code Execution) 잠재 공격 표면을 차단한다.
+- 2026-07-13 T10: separation 후에도 운영 장애 및 rollout preflight latency를 방어하기 위해 기존 public API 내부에 CONVERSION_DISPATCHER=inline fallback 코드를 완전히 보존하여 즉각적 zero-downtime rollback target을 확보해야 한다.
+
+- 2026-07-12 T1: agent-lsp daemon이 10초 내 시작되지 않아 Serena symbol overview와 범위 제한 소비자 검색을 blast-radius fallback으로 사용했다.
+- 2026-07-12 T1 correction: backward compatibility는 신규 필드를 단순 optional로 만드는 것보다 `legacy 둘 다 생략 | available true/reason 금지 | available false/reason 필수` union으로 표현해야 기존 producer를 허용하면서 신규 상태 모순을 컴파일 시점에 차단한다. Vitest는 `@ts-expect-error`를 검사하지 않으므로 패키지 `tsc` build가 타입 회귀의 RED/GREEN 증거다.
+
+## 2026-07-12 T2
+- 공개 상태는 저장된 `message`/`downloadUrl`을 신뢰하지 않고 API 경계에서 T1 allowlist와 status/deletedAt/expiry/result presence로 다시 계산해야 legacy 레코드도 안전하다.
+- 변환 raw 예외는 `jobId`가 포함된 구조화 서버 로그에만 남기고, JobRecord에는 `errorCode`와 T1 고정 메시지만 저장한다.
+- member history와 owner-aware status/download route가 같은 availability 계산기를 공유해야 만료·결과 누락 판단이 어긋나지 않는다.
+
+- 2026-07-12 T2 verifier repair: raw tombstone을 조회해 own-deleted 410/DELETE idempotency를 유지할 때는 반드시 stored `ownerType=user`와 `userId`를 먼저 대조해야 한다. 공개 `JobStatusResponse`에는 내부 감사/보존 필드(`deletedBy`, `deletedAt`, `metadataExpiresAt`, `tombstoneUntil`)를 직렬화하지 않는다.
+
+## 2026-07-12 T4
+- stale processing 복구는 query 결과를 신뢰하지 않고 각 document를 transaction 안에서 다시 읽어 `status=processing`과 `updatedAt < cutoff`를 동시에 확인해야 active worker 갱신과 경쟁할 때 lock을 잃은 maintenance가 되돌리지 않는다.
+- upload-session 만료 전이와 객체 삭제 권한은 분리한다. 삭제 직전 claim은 terminal `expired`, exact objectPath, owner discriminator/identity, expiresAt을 모두 다시 비교하고 one-time `cleanupClaimedAt`을 원자적으로 기록해야 한다.
+- Memory store는 비운영 테스트 대역이며 프로세스 간 원자성을 제공하지 않는다. mocked Firestore transaction은 precondition re-read와 반복 호출을 검증하지만 실제 emulator/production conflict retry 및 Cloud Tasks는 T5 환경 검증 대상으로 남는다.
+- RED: `pnpm --filter api test -- job-store.maintenance.test.ts` → 4/4 실패(메서드 부재). GREEN: 집중 suite → 66/66 통과.
+
+## 2026-07-12 T3
+- T3의 핵심 구현(`history/page.tsx`의 loading/success/empty/error/stale/authError 상태 분리, `JobHistoryList`의 `downloadAvailable` discriminated contract, `DropzoneUploader`의 completed-but-unavailable 메시지)과 회귀 테스트(99개)는 이미 완성되어 있었다. 작업의 대부분은 검증과 브라우저 QA 증빙이었다.
+- Firebase Client SDK가 Auth Emulator를 사용하려면 `firebase.ts`에서 `connectAuthEmulator`를 명시적으로 호출해야 한다. `FIREBASE_AUTH_EMULATOR_HOST` 환경 변수만으로는 Next.js 클라이언트 번들에서 감지되지 않으므로 `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST`를 사용해야 한다.
+- Playwright `page.route`로 API 응답을 가로채면 Firebase 인증 세션 없이도 인증된 상태의 오류/재시도/stale/unavailable 동작을 브라우저에서 검증할 수 있다. 단, 로그인 자체는 Auth Emulator + `connectAuthEmulator`가 필요하다.
+- 브라우저 QA 11/11 PASS: 미인증, 로그인, API 500→error+retry, retry→success, completed-but-unavailable(라벨만), completed-available(버튼), stale refresh(데이터 유지+경고), 401→auth-error(빈 상태 아님).
+
+### T3 Correction (post-independent-verification)
+- `firebase.ts`에 `connectAuthEmulator`를 추가한 것은 T3 범위(히스토리/업로드 UI 상태)를 벗어나는 auth SDK 설정 변경이었다. 브라우저 QA를 위해 소스 코드를 영구 수정해서는 안 된다. 대신 `page.route` + `addInitScript`로 런타임에만 인증 경계를 모킹해야 한다.
+- `200 OK + 비배열 JSON`을 `Array.isArray(data) ? data : []`로 처리하면 프로토콜 오류가 빈 이력으로 위장된다. `res.json()` 실패와 `!Array.isArray(data)`를 각각 error/stale 경로로 분기해야만 실제 빈 이력과 구분된다.
+- `firebase.json`은 git에 tracked되지 않은(`??`) 미커밋 파일이었다. T3 QA 중 임시로 emulator 설정을 추가했다가 원래 내용으로 복구했지만, 이 파일 자체가 T3에서 생성된 것이 아니라 이전부터 디스크에 존재했으므로 삭제하지 않고 원래 내용으로 복구만 했다.
+- 수정 후 최종 검증: 103/103 단위 테스트 통과(4개 malformed-JSON 회귀 테스트 추가), typecheck/lint clean, 브라우저 QA 5/5 PASS(미인증 상태 + 영구 config 변경 없음 확인).
+
+## 2026-07-12 T4 final-claim correction
+- 만료 전이에서 완료 여부를 검사해도 전이 결과와 객체 삭제 사이에 완료가 기록될 수 있으므로, 최종 cleanup claim transaction이 다시 `status=expired`, `completedAt` 부재, `cleanupClaimedAt` 부재를 동시에 강제해야 한다.
+- 최종 claim은 cleanup eligibility와 별개로 `jobId`, `objectPath`, `ownerType`, `userId`, `accessTokenHash`, `expiresAt`의 scan/current 동일성을 유지해야 T5가 반환된 정확한 GCS 경로만 삭제할 수 있다.
+- RED: 집중 suite 18개 중 Memory/Firestore의 `completedAt` 경쟁 2개 실패. GREEN: 집중 18/18, API 전체 311/311, API build와 두 수정 파일 LSP diagnostics 통과.
+- Firestore 검증은 transaction callback mock의 current snapshot 및 zero-write precondition까지이며 emulator/production conflict retry는 실행하지 않았다.
+
+## 2026-07-12 T7
+- 모바일 내비게이션을 별도 컴포넌트(`MobileNav.tsx`)로 분리하고 `PageLayout`에서 인증 사용자에게만 렌더링하면 기존 데스크톱 내비게이션과 `AuthNav`를 변경 없이 유지할 수 있다. `usePathname`으로 현재 라우트를 감지해 `aria-current="page"`를 설정한다.
+- React 19 + ESLint `react-hooks/set-state-in-effect` 규칙은 effect 내에서 `setOpen(false)`를 직접 호출하는 것을 금지한다. `pathname` 변경을 `useEffect`로 감지하는 대신 링크 `onClick={closePanel}`로 패널을 닫아야 lint 규칙을 위반하지 않으면서 동일한 UX를 제공할 수 있다.
+- 포커스 트랩(Tab trap) 구현 시 JSDOM에서 `offsetParent`가 항상 `null`이므로 `el.offsetParent !== null` 필터를 사용하면 focusable 요소가 모두 제거된다. `offsetParent` 체크 없이 `querySelectorAll` 결과를 그대로 사용해야 한다.
+- `userEvent.tab()`은 keydown 이벤트를 발생시킨 후 `preventDefault()` 여부와 무관하게 포커스를 이동시킬 수 있으므로, 포커스 트랩 테스트에서는 `fireEvent.keyDown(element, { key: "Tab" })`를 사용해야 핸들러에서 `preventDefault()` + `first.focus()`가 실행됨을 검증할 수 있다.
+- `PageLayout`이 `MobileNav`를 import하고 `MobileNav`가 `next/navigation`의 `usePathname`을 사용하므로, 기존 `board-page.test.tsx`와 `history-page.test.tsx`의 `next/navigation` mock에 `usePathname`을 추가해야 한다. 이는 컴포넌트 의존성 추가에 따른 필수 수정이다.
+- `UploadStatus` 타입에 `deleted`가 포함되어 있으므로 `Record<UploadStatus, string>` 맵을 만들 때 모든 8개 상태를 포함해야 타입 에러가 발생하지 않는다.
+- 진행률 바에 `role="progressbar"` + `aria-valuemin/max/now/valuetext`를 추가하고 `sr-only` 클래스의 `role="status"` + `aria-live="polite"` live region으로 상태 전환을 알리면 스크린 리더 사용자가 업로드/변환 진행 상황을 인지할 수 있다.
+
+### T7 independent verification (2026-07-12)
+- PASS: `MobileNav`은 `loading || !user`에서 null을 반환하고, 인증 사용자에게만 375px 모바일 트리거와 홈/변환 이력/게시판 링크를 제공한다. 익명 비노출은 `MobileNav.test.tsx`의 익명 테스트로 확인했다.
+- PASS: 인증 메뉴는 Enter/click 토글, Escape 닫기 및 트리거 포커스 복귀, Tab/Shift+Tab 순환을 구현하며, 링크 클릭 시 패널을 닫는다. 지정 테스트 14개가 모두 통과했다.
+- PASS: `usePathname`은 Next 16 문서 관례대로 Client Component에서 사용되고, `/history` 및 `/board/*`와 `/`에 `aria-current="page"`를 정확히 설정한다.
+- PASS: 업로드/대기/변환 상태 progressbar에 `aria-valuemin`, `aria-valuemax`, `aria-valuenow`, `aria-valuetext`가 있고, 상태 알림은 `role="status"` 및 `aria-live="polite"`를 사용한다. 장식 SVG는 `aria-hidden="true"`다.
+- PASS: `pnpm --filter web test -- src/components/MobileNav.test.tsx src/components/DropzoneUploader.a11y.test.tsx` 결과 2개 파일, 23/23 테스트 통과. `pnpm --filter web lint`, `pnpm --filter web typecheck`, 대상 3개 TSX LSP diagnostics도 오류 없음.
+- 결함 없음: T7 범위 코드 변경은 하지 않았다.
+
+### 2026-07-12 T7 independent audit
+- REJECT: `MobileNav`는 `aria-haspopup="menu"`/`role="menu"`/`role="menuitem"`을 선언했지만, 열릴 때 메뉴 항목으로 포커스를 옮기지 않고 방향키·Home/End 메뉴 탐색 없이 Tab 트랩을 사용해 ARIA menu 키보드 계약과 불일치한다 (`MobileNav.tsx:106,128,142`).
+- REJECT: T7 접근성 테스트는 idle 상태만 렌더링해 실제 progressbar의 `aria-valuemin/max/now`와 업로드·대기·변환 상태 live announcement를 구동하지 않는다 (`DropzoneUploader.a11y.test.tsx:120-139`). 기존 브라우저 증거도 375px 익명 상태만 확인해 authenticated 링크 acceptance를 직접 검증하지 못했다.
+- 최신 검증: 표적 Vitest 23/23 통과, web lint/typecheck 통과, T7 소스·테스트 5개 LSP diagnostics 오류 없음. `firebase.ts`에는 emulator 연결 변경이 없고, untracked `firebase.json`은 Firestore indexes만 포함해 Auth Emulator 영구 설정 scope violation은 확인되지 않았다.
+
+### T7 defect correction (2026-07-12)
+- 결함 확인: `MobileNav`가 `role="menu"`/`role="menuitem"`을 사용하면서 실제 구현은 disclosure의 Tab/Shift+Tab 트랩만 제공해 ARIA menu 키보드 계약과 불일치했다.
+- 수정: `menu`/`menuitem` role을 제거하고 native disclosure semantics와 `aria-label`/`aria-current`를 유지했다. 데스크톱 내비게이션/AuthNav 및 인증 판정은 변경하지 않았다.
+- 결함 확인: T7 a11y 테스트가 idle 렌더링만 검증해 실제 progressbar 필수 속성과 uploading 상태 live announcement를 구동하지 않았다.
+- 수정: `react-dropzone` callback 및 API client를 테스트에서 mock해 실제 drop 경로로 uploading progressbar를 렌더링하고 `aria-valuemin/max/now/valuetext`를 검증하는 회귀 테스트를 추가했다.
+- 최종 검증: 지정 테스트 2개 파일 24/24 통과, `pnpm --filter web lint` 성공, `pnpm --filter web typecheck` 성공, 변경 TSX LSP diagnostics 0건.
+- 후속 정합화: disclosure semantics로 전환한 구현에 맞춰 `MobileNav.test.tsx`의 obsolete `aria-haspopup="menu"` 단정을 제거했다. 최종 지정 테스트는 다시 24/24 통과했다.
+
+### T7 audit follow-up (2026-07-12)
+- `MobileNav.test.tsx`에 `userEvent.keyboard("{Enter}")` 회귀 테스트를 추가해 실제 Enter 입력 후 panel과 `aria-expanded="true"`를 검증했다.
+- 최신 지정 테스트 25/25, web lint, web typecheck가 PASS했다.
+- Chromium 375x812 anonymous 캡처는 생성했지만 저장소에 Playwright Node harness/config 또는 `useAuth` runtime fixture가 없어 authenticated browser state를 안전하게 주입할 수 없었다. Firebase 설정·credential/token은 변경하지 않았다.
+- authenticated link visibility와 Enter/Tab/Escape/focus-return은 runtime auth mock RTL로 검증했고 authenticated browser capture 미생성은 evidence에 limitation으로 기록했다. menu 관련 ARIA 속성 최종 검색은 미검출이다.
+## T8 게시판/이력 접근성 및 삭제 대화상자 (2026-07-12)
+
+- 게시판 필터는 `role="group"`의 이름과 버튼별 `aria-pressed`로 선택 상태를 색상과 분리해 노출한다.
+- 목록 컨테이너는 요청 중 `aria-busy`를 유지하고, pagination은 이름 있는 `nav` 안에서 현재 페이지를 `aria-current="page"`로 표시한다.
+- 삭제는 native `window.confirm` 대신 `ConfirmationDialog`를 사용한다. alertdialog 초기 포커스, Tab/Shift+Tab 순환, Escape/취소, 배경 보호, 확인 후 비동기 실패 유지, trigger 포커스 복귀를 테스트한다.
+- 이력 행은 `originalFileName`을 우선 표시하고 legacy 응답에는 `파일명 없는 변환 작업`을 사용한다. job ID는 보조 정보로만 노출한다.
+- 검증: `pnpm --filter web test` 11 files/130 tests pass, targeted board/history 52 tests pass, web lint/typecheck/build 및 api typecheck pass. `ocr review`는 전체 선행 변경 스캔 중 120초 timeout으로 종료되어 참고 결과로만 기록한다.
+
+## 2026-07-12 F1 prerequisite gate
+
+- `VERDICT: REJECT`는 제품 코드 결함 판정이 아니라, 계획의 final wave가 T1-T12 완료 후에만 시작된다는 선행조건 판정이다.
+- F1은 미완료 T5, T6, T8, T9, T10, T11, T12와 인증 사용자 375x812 브라우저-runtime 증거가 없어 `[~]`인 T7 때문에 보류한다. T10/T11의 사용자 승인 대상 cloud 작업도 완료 전제에 포함된다.
+- `.omo/boulder.json`의 F1 `running` 표시는 계획의 미체크 상태 및 선행조건과 불일치하는 절차 메타데이터일 뿐 승인 증거가 아니다. T1-T12가 모두 완료되고 최신 evidence가 준비된 후 F1을 다시 실행한다.
+
+### T8 independent verification (2026-07-12)
+- 기존 T8 구현(소스 코드)은 acceptance 기준을 이미 충족했다: category group/aria-pressed, aria-busy, pagination nav/aria-current, ConfirmationDialog alertdialog/aria-modal/aria-labelledby/aria-describedby/initial focus/Tab trap/Escape/async busy/focus restore/background non-interaction, originalFileName 주 제목 + legacy fallback, window.confirm 완전 제거(grep 0건).
+- codegraph가 `ConfirmationDialog`에 covering test가 없음을 보고했고, 기존 board/history 테스트에도 접근성 속성(aria-pressed, aria-busy, aria-current, aria-label, aria-modal, aria-labelledby) 직접 단정이 없었다. 기능적 동작은 검증되었으나 acceptance MUST DO가 명시하는 "확인한다"를 충족하기 위해 직접 단정을 보충했다.
+- `ConfirmationDialog.test.tsx` 신규 13개: open=false 렌더링 없음, alertdialog+aria-modal+aria-labelledby+aria-describedby, initial focus cancel, Tab/Shift+Tab trap, Escape(busy/no-busy), cancel/confirm callback, busy disabled+label, custom labels, trigger focus restore, backdrop click non-interaction.
+- `board-page.test.tsx` +4개: category filter role=group+aria-label+aria-pressed, aria-pressed 토글, aria-busy fetch 중/완료 후, pagination nav+aria-current+aria-label 페이지 문맥.
+- 최종 검증: 12 files/147 tests pass(기존 130 + 신규 17), typecheck/lint/build exit 0, 변경 2개 파일 LSP diagnostics 0건.
+- 브라우저 QA 미실행: 저장소에 Playwright harness 또는 `useAuth` runtime fixture가 없어 authenticated browser state를 안전 주입 불가. Firebase 설정/credential 변경 금지 제약 준수. 대신 RTL로 keyboard/ARIA/async/non-interaction behavioral coverage를 검증.
+
+## 2026-07-13 T6
+- `FirestoreBoardStore.listPosts`의 category query는 `category == value`와 `createdAt DESC`를 결합하므로 `boardPosts(category ASC, createdAt DESC)` COLLECTION composite index가 repository declaration과 정확히 대응한다.
+- category 없는 목록은 `createdAt DESC` 단일 필드 정렬이며 별도 composite index가 필요하지 않다.
+- 실제 index 배포 및 staging/production `READY` 관찰은 repository 테스트와 분리된 사용자 승인 대상이다.
+
+## 2026-07-13 T5
+- Cloud Scheduler service-account OIDC는 Firebase 사용자 ID token이 아니며 custom endpoint audience를 검증해야 하므로, Firebase `getAuth().verifyIdToken()` 대신 직접 의존성인 `google-auth-library`의 `OAuth2Client.verifyIdToken({ idToken, audience })` 경계를 사용한다.
+- maintenance service는 T4가 transaction에서 실제 `processing -> queued` 전이에 성공해 반환한 job만 enqueue하고, upload session은 one-time `claimExpiredUploadObject`가 반환한 exact object path만 삭제해야 query scan과 side effect 사이의 경쟁을 막는다.
+- OIDC subject는 변경 가능한 service-account email이 아니라 Google token의 immutable numeric `sub`와 exact match한다. audience/subject 구성 누락도 fail-closed 처리한다.
+- maintenance 응답과 구조화 로그는 claim/enqueue/delete 실패 개수와 `hasMore`만 포함하고 token, job ID, object path, signed URL, access token, raw exception은 폐기한다.
+- 실제 Scheduler 생성, IAM grant, Cloud Run env/deploy 및 staging token 검증은 사용자 승인 gate로 남겼고 이번 작업에서는 GCP 변경 명령을 실행하지 않았다.
+
+### 2026-07-13 T5 final verification
+- Scheduler OIDC의 immutable identity 설정은 값 존재만 확인하면 이메일 같은 mutable identifier가 들어갈 수 있으므로 `sub` 설정 자체도 digits-only로 검증하고 누락/비숫자 모두 fail-closed 해야 한다.
+- maintenance의 공개 응답과 완료 로그는 정확히 `attempted/recovered/skipped/failed/hasMore`만 직렬화하면 내부 단계명, job/object 식별자, raw enqueue/delete 오류가 운영 경계 밖으로 확장되지 않는다.
+- T4 복구 transaction이 `processing -> queued`를 enqueue 전에 커밋하므로 enqueue 실패 집계는 안전하게 노출되지만, 실패한 queued job의 후속 재-dispatch 보장은 별도 outbox/queued dispatcher 없이는 제공되지 않는다.
+
+### 2026-07-13 T6 local verification follow-up
+- 인덱스 선언 검증 테스트는 실제 query chain도 함께 단정해야 한다. 세 category에서 `where(category, ==)` 다음 `orderBy(createdAt, desc)`와 동일한 offset pagination을 확인하고, 비필터 query에는 `where`가 없음을 확인하면 불필요한 composite index 추가를 방지할 수 있다.
+- repository 선언·50개 게시판 테스트·API typecheck/build 성공은 로컬 계약 증거일 뿐 staging index `READY` 증거가 아니다. 배포와 현재 상태의 read-only observation은 사용자 승인 후 별도로 수행해야 한다.
+- agent-lsp daemon이 시작되지 않은 실행에서는 diagnostics 성공을 재사용해 주장하지 않고, TypeScript 편집을 생략한 뒤 실제 Vitest와 `tsc` 결과만 증거로 기록한다.
+
+### 2026-07-14 09:13:57 +09:00 T8 actual browser QA
+- 저장소 밖 임시 Playwright 하네스에서 Firebase Auth REST/API만 runtime fixture로 대체하면 credential이나 영구 Firebase 설정 없이도 production Next 앱의 인증된 board/history UI를 실제 Chromium으로 구동할 수 있다.
+- 375x812, 768x1024, 1280x900 각각에서 category group/aria-pressed 전환, 요청 중→완료 aria-busy, pagination navigation/current-page 문맥, filename-first/legacy fallback을 직접 관찰했다.
+- 삭제 alertdialog는 실제 키보드로 초기 cancel focus, Tab/Shift+Tab 순환, Enter cancel/confirm, Escape, async busy disabled/label, trigger focus restore를 통과했고 overlay 클릭은 dialog나 배경 action을 변경하지 않았다.
+- 표적 board 31/31 및 history/dialog 50/50, lint/build, build 후 독립 typecheck가 exit 0이었다. build와 병렬 실행한 최초 typecheck의 exit 2는 `.next/types` 동시 재생성 경합이었고 순차 재실행으로 구분했다.
+
+## 2026-07-16 11:10 +09:00 T9
+- `fetchWithAuth`를 인증 헤더 경계로 유지하고 JSON/Blob 성공 body만 공통 parser에서 처리하면 명시적 `user | null` 호출 의미를 바꾸지 않고 HTTP/network/protocol 실패를 일관되게 분류할 수 있다.
+- parser는 성공 JSON을 `unknown`으로 받은 뒤 소비자 DTO guard를 요구해야 malformed 200과 배열 내부 malformed 원소가 empty/success로 변환되지 않는다.
+- 공통 오류는 안전한 code/status/message만 보존하고 화면은 code를 기존 한국어 문구로 매핑해야 history stale/auth/retry와 board 화면별 문구를 유지하면서 raw body나 내부 상세 노출을 막을 수 있다.
+- Blob 응답은 HTTP 상태를 먼저 분류하고 `blob()` 실패와 빈 Blob을 `malformed_body`로 거절해야 정상 다운로드와 protocol failure가 분리된다.
+- 최종 검증은 표적 88/88, 전체 web 168/168, typecheck/lint/T9 diff check 및 변경 파일 LSP diagnostics 오류 없음이었다.
+
+## 2026-07-16 11:19 +09:00 T9 Blob parser 보완
+- non-empty 여부만 검사한 Blob parser는 HTTP 200 JSON/HTML/text 오류 페이로드도 다운로드 성공으로 통과시키는 결함이 있었다.
+- 결과 다운로드의 확정 media type 계약은 local Express `.pdf` 응답과 GCS PDF metadata의 `application/pdf`, 그리고 안전한 일반 binary 전달 호환을 위한 `application/octet-stream`이다. 대소문자와 매개변수를 정규화한 뒤 이 두 media type만 허용한다.
+- MIME 거부는 body 소비와 object URL 생성 전에 수행하고 `malformed_body`의 고정 메시지만 반환해야 응답 원문이나 내부 상세가 노출되지 않는다.
+- 보완 검증은 parser/download 표적 26/26, 전체 web 173/173, typecheck/lint 및 변경 파일 LSP diagnostics 오류 없음이었다.
+
+## 2026-07-16 T10 independent private-converter review
+- VERDICT: REJECT. Critical 1 / High 6 / Medium 3. 이 판정은 구현 품질이 아니라 T11 진입을 허용할 수 있는 배포 계약·승인 증거의 충족 여부에 대한 것이다.
+- Critical: ADR과 T10 evidence의 operator approval가 비어 있고 사용자 승인도 존재하지 않는다. 계획상 이 review 자체는 approval을 대체할 수 없으므로 T11은 시작할 수 없다.
+- High: dispatcher가 task를 생성하는 runtime identity, OIDC token identity, converter invoker를 혼용한다. 실제 task 생성 주체의 queue enqueue 권한과 token identity에 대한 제한된 `iam.serviceAccounts.actAs`, token identity의 converter service-level invoker를 분리한 IAM diff가 필요하다.
+- High: API 측 worker URL/audience와 converter 측 expected audience/caller identity 환경 계약이 ADR service matrix에 없다. 현재 코드는 값이 없으면 localhost worker URL로 귀결되고 expected caller email 검증도 생략할 수 있어, 명시적 fail-closed preflight 없이는 안전한 배포 계약이 아니다.
+- High: `Internal` ingress는 outbound egress를 차단하지 않는다. ADR의 "disabled or restricted VPC proxy"는 선택지가 열려 있어 검증 불가능하며, GCS/Firestore/Google token endpoints 접근을 보존하면서 일반 인터넷 egress를 차단하는 connector/direct-VPC, route, firewall/NAT/DNS 계약과 negative test가 필요하다.
+- High: 현재 workflow는 LibreOffice와 public API/worker route를 같은 이미지·공개 Cloud Run service에 배포한다. 별도 converter service, private ingress, no-unauthenticated, 서비스별 identity, worker target, staged traffic 전환을 구현하거나 검증하지 않으므로 ADR proposal을 현재 배포 완료로 볼 수 없다.
+- High: `CONVERSION_DISPATCHER=inline` rollback은 public image에 converter binary/fonts/extension과 충분한 CPU/memory/timeout이 계속 존재할 때만 가능하다. ADR은 public service를 축소하면서 이 runtime 보존 조건, old revision/image pin, target-only rollback, rollback health/HWP smoke test를 고정하지 않아 즉시 rollback 주장이 성립하지 않는다.
+- High: 현재 runtime identity에 deploy/admin, artifact write, project-wide service-account delegation과 broad object 권한이 함께 있어 public API compromise의 blast radius가 과도하다. 분리 전 dedicated identities와 resource-level grants로 교체하고 기존 broad bindings 제거 순서 및 rollback 시 임시 권한 수명을 명시해야 한다.
+- High: bucket은 uniform bucket-level access가 꺼져 있고 public access prevention이 확인되지 않아 legacy ACL/public exposure 가능성을 배제하지 못한다. 실제 ACL/IAM read-only 확인, public access prevention/UBLA 적용 계획, direct signed upload 호환 검증과 rollback 영향을 승인 전에 고정해야 한다.
+- Medium: converter가 동일 Express app을 그대로 실행하면 OIDC invoker가 worker 외 route에도 Cloud Run invocation 권한을 가진다. converter-only entrypoint/route allowlist 또는 서비스별 router 계약과 unauthenticated/authorized negative tests가 필요하다.
+- Medium: health/deploy topology가 단순 `/health` 이상으로 정의되지 않았다. startup(바이너리·extension), liveness, dependency readiness, queue target smoke, revision promotion/rollback 관찰 기준을 서비스별로 명시해야 한다.
+- Medium: retryable 실패가 `failed` 기록 후 `queued`로 복귀하는 현재 흐름은 inherited retry 조건을 만족하지만 문자열 기반 retry 분류와 ADR의 LibreOffice crash 분류가 일치하지 않는다. 상태 재큐잉 실패·최종 attempt 소진·stuck recovery까지 staging failure injection으로 검증해야 한다.
+- 기준선 교차검토: 현재 단일 public service는 inline fallback 조건이며 queue는 존재하지만 private target 관련 환경 변수가 구성되지 않았다. 따라서 queue 존재/RUNNING만으로 delivery topology가 완성되었다고 판정할 수 없다.
+- T11 gate: 시작 불가. 위 Critical 해소, 모든 High를 ADR/IAM diff/deploy contract에 반영, redacted read-only 재검증, 독립 review에서 Critical/High 0건, 그리고 사용자의 명시적 승인이 모두 필요하다.
+- Count correction: 위 상세 findings의 정확한 집계는 Critical 1 / High 7 / Medium 3이다.
+
+## 2026-07-16 T10 independent review baseline correction
+- CORRECTION: 이전 line 171의 "private target 관련 환경 변수가 구성되지 않았다"는 PowerShell 중첩 `$_` shadowing에서 유래한 잘못된 관찰이므로 폐기한다. 최신 직접 관찰상 storage/job backends, Cloud Tasks dispatcher mode, queue name/location은 literal configured이고 worker URL/audience만 empty다.
+- CORRECTION: bucket IAM에는 public principal binding이 관찰되지 않았다. UBLA가 꺼져 있고 PAP가 unset인 상태는 public exposure 확정이 아니라 hardening policy 미완료이며, legacy ACL risk를 read-only ACL 확인과 UBLA/PAP 전환 호환성 검증으로 닫아야 한다.
+- Revised verdict: REJECT. Critical 1 / High 6 / Medium 3. T11 BLOCKED. 이번 독립 검토는 operator approval을 대체하지 않는다.
+- Critical: T10 evidence의 operator approval가 비어 있고 명시적 사용자 승인 기록이 없다. 계획의 T11 approval gate가 충족되지 않았다.
+- High: 실제 task 생성 호출자는 API runtime ADC인데 ADR은 별도 dispatcher identity에 enqueue 권한과 converter invoker를 함께 배치해 createTask caller, OIDC token identity, service-level invoker 관계와 제한된 `actAs` 계약을 정확히 정의하지 않는다. 현재 runtime identity의 deploy/admin, artifact write, service-account delegation, broad object 권한 제거 diff와 순서도 없다.
+- High: 현재 worker URL/audience가 empty인 것은 기존 public API worker fallback에는 일관되지만 private converter readiness 증거가 아니다. API의 explicit converter worker URL/audience와 converter의 expected audience/caller identity를 서비스별 필수값으로 만들고 missing-value startup failure를 고정해야 한다.
+- High: `Internal` ingress는 converter outbound를 차단하지 않는다. ADR의 disabled-or-proxy 선택지를 GCS/Firestore/token access를 보존하면서 일반 internet egress를 차단하는 하나의 route/firewall/NAT/DNS 계약과 negative test로 확정해야 한다.
+- High: checked-in workflow는 public monolithic API image/service만 배포하며 separate converter, private ingress, no-unauthenticated, dedicated runtime identity, target promotion을 배포하거나 검증하지 않는다. proposal과 current deployment를 구분한 별도 topology가 필요하다.
+- High: inline rollback은 public revision에 LibreOffice/fonts/extension과 충분한 resource/timeout이 보존돼야 한다. pinned rollback revision/image, 보존 기간, target-only 전환, 실제 HWP smoke 및 복귀 조건이 계약에 없다.
+- High: 요청된 `0001-private-converter-cloud-run-deployment.md`는 현재 존재하지 않고 실제 proposed ADR/evidence에는 최신 redacted runtime baseline, 정확한 resource/IAM add-remove diff, 현재 존재하는 queue를 반영한 실행 순서가 없다. 따라서 T10의 approval-ready evidence acceptance를 충족하지 않는다.
+- Medium: bucket은 public IAM binding이 관찰되지 않았지만 UBLA=false/PAP unset이다. public exposure로 과장하지 않고 legacy ACL closure, signed upload compatibility, rollback을 확인해야 한다.
+- Medium: 동일 Express app을 converter로 재사용할 경우 service-level invoker가 worker 외 route에도 도달할 수 있으므로 converter-only entrypoint/router allowlist와 route negative test가 필요하다.
+- Medium: generic health만으로 LibreOffice/extension/storage/job-store readiness를 증명하지 못하며 retry 분류도 문자열 기반이다. startup/readiness, queue target smoke, queued 복귀 실패, final-attempt exhaustion, worker crash/stuck recovery를 staging에서 검증해야 한다.
+
+## 2026-07-16 T10 ADR/evidence remediation
+- 문서만 수정했다. `docs/architecture/adr/0001-private-converter-service-separation.md`와 `.omo/evidence/task-10-code-frontend-improvement-final.md`만 변경했으며 소스/config/infra/CI는 건드리지 않았다.
+- ADR status는 `proposed`로 유지했고 operator approval을 발명하거나 완료로 바꾸지 않았다. T10 checkbox도 완료로 바꾸지 않았다.
+- 2026-07-16 corrected baseline을 source of truth로 반영했다: queue/storage/job/dispatcher 설정은 literal configured이나 private converter worker URL/audience는 empty이고 bucket public IAM binding은 관찰되지 않았으나 UBLA=false/PAP unset이다.
+- 현재 workflow가 단일 public monolith `--allow-unauthenticated` 배포임을 명시하고, 이를 private converter 배포 완료처럼 표현하지 않았다.
+- API runtime task creator(`api-public-sa` 또는 Workload Identity), OIDC token subject(`api-dispatcher-sa`), converter runtime(`api-converter-sa`) 3개 정체성을 분리하고 Cloud Tasks primary service agent의 제한된 `iam.serviceAccounts.actAs` on `api-dispatcher-sa`, API runtime의 queue `roles/cloudtasks.enqueuer`, OIDC subject `api-dispatcher-sa`의 converter Cloud Run service resource에 대한 `roles/run.invoker`를 resource-level로 정의했다.
+- API 측 `INTERNAL_WORKER_URL`/`INTERNAL_WORKER_AUDIENCE`와 converter 측 expected audience, issuer, caller email을 서비스별 필수값으로 명시하고 누락 시 T11 preflight fail-closed 조건을 10개로 고정했다.
+- egress는 ingress와 구분했고, GCS/Firestore/Google token 접근만 보존하면서 public internet을 실제로 차단하는 하나의 선택된 egress 계약(all traffic through VPC/Direct VPC egress + firewall deny + Private Google Access/restricted Google APIs route + no general-purpose Cloud NAT, project feasibility validated in staging)과 negative test를 명시했다.
+- converter-only entrypoint/route allowlist(또는 `CONVERTER_ONLY` gate), `/ready` probe(LibreOffice warm-up), retry/exhaustion/stuck validation, pinned revision/image, target-only rollback, HWP smoke를 명시했다.
+- current→target 리소스 및 IAM add-remove diff, UBLA=true/PAP=enforced 호환성, 실행 순서, 사용자 승인 게이트를 redacted evidence에 기록했다.
+- 실제 bucket명, signed URL, object path, credential, token, raw exception, approval/session ordinal은 문서에 넣지 않았다.
+- 남은 차단 조건: 독립 재검토 0 Critical/High, read-only 재검증(live staging evidence), 명시적 사용자 승인(operator signature/date). T11은 여전히 blocked.
+
+## 2026-07-16 T10 ADR/evidence correction (post-write verification)
+- CORRECTION: `Serverless VPC Access + PRIVATE_RANGES_ONLY`가 public internet egress를 차단한다고 기술한 부분은 사실 오류다. `PRIVATE_RANGES_ONLY`는 RFC 1918/사설 범위 트래픽만 connector로 라우팅하고 public range traffic은 Cloud Run 기본 경로로 남기므로, public internet deny를 보장하지 않는다.
+- 정정 target: ADR Section 5.2, 5.3, 5.4, 6.2 preflight 7, Section 7.2 preflight 7, Section 8 threat model, evidence Section 3/4의 "PRIVATE_RANGES_ONLY preserving GCS/Firestore while blocking public internet" 서술.
+- 선택된 egress 계약을 다음과 같이 정정했다: "all traffic through VPC/Direct VPC egress + no general-purpose Cloud NAT + firewall deny + Private Google Access or restricted Google APIs DNS/route + project feasibility validated in staging" 형태의 public internet deny 강제 방안. 정확한 project/network feasibility는 staging gate로 남겼다.
+- negative egress smoke에 public HTTPS/DNS 차단을 명시했고, GCS/Firestore/OIDC token endpoints reachable 테스트를 유지했다.
+- CORRECTION: API runtime task creator, OIDC token service account, converter runtime 3개 정체성 서술을 정정했다. `createTask`의 실제 호출 주체는 API runtime ADC/service account(`api-public-sa` 아님)이며, Cloud Tasks control plane이 `api-dispatcher-sa`로 `actAs`하여 발급한 OIDC token의 subject가 converter 측 expected caller email이다. converter runtime SA(`api-converter-sa`)는 Cloud Run service resource의 invoker binding이 아니라, 그 SA가 Cloud Run service를 런타임할 때 사용하는 identity이다.
+- 정확한 관계: Cloud Tasks primary service agent -> `iam.serviceAccounts.actAs` on `api-dispatcher-sa`; API runtime caller(`api-public-sa` 또는 WIF) -> `roles/cloudtasks.enqueuer` on queue; `api-dispatcher-sa` (OIDC subject) -> `roles/run.invoker` on `hwp2pdf-converter` Cloud Run service resource; `api-converter-sa` -> runtime SA on `hwp2pdf-converter`, GCS/Firestore IAM only.
+- CORRECTION: `roles/run.invoker`가 converter runtime service account에 "수신"된다는 표현을 정정했다. `roles/run.invoker`는 converter Cloud Run **service resource**에 `api-dispatcher-sa` principal을 binding하는 것이다.
+- CORRECTION: `roles/storage.objectAdmin`을 "최소 권한"으로 표현한 부분을 정정했다. prefix-restricted custom permission 또는 IAM condition 가능 여부는 staging policy validation으로 고정하며, 설계 단계에서 지원 여부를 확정 사실로 단정하지 않는다. interim으로 `roles/storage.objectAdmin`을 사용할 때는 object-level이며 `roles/storage.admin`(bucket-level)이 아님을 명시하고, 더 작은 custom role/condition 교체는 staging IAM simulation에서 검증 후 반영한다.
+- 수정 파일: `docs/architecture/adr/0001-private-converter-service-separation.md`, `.omo/evidence/task-10-code-frontend-improvement-final.md`, `.omo/notepads/code-frontend-improvement-final/learnings.md`(append only). 지정 외 파일은 수정하지 않았다.
+- T10/T11 checkbox, operator approval, status 변경 없음. GCP resource/deploy/IAM/source/config/CI 변경 없음.
+
+## 2026-07-17 10:13:00 +09:00 read-only staging baseline observation
+
+- Read-only facts observed today. No mutations were performed.
+- Verified credentials/project scope: `gcloud` is installed; an active account exists; project `hwp2pdf-499911` is readable.
+- Cloud Run services: listing returned exactly one API service, `hwp2pdf-api`, in `asia-northeast3`. No converter service was returned by the service listing.
+- Cloud Scheduler jobs: listing returned no jobs.
+- Cloud Tasks queues: listing returned no queues.
+- Firestore composite indexes: listing returned only the existing `jobs` index on `ownerType` ascending, `userId` ascending, `createdAt` descending in `READY` state. No composite index for `boardPosts` category/createdAt was returned.
+- Conclusion: these observations corroborate the existing external deployment/approval gates for T5 (Cloud Scheduler/IAM), T6 (Firestore board index), T10 (converter service absence), and T11 (live staging evidence gap). They do not resolve any of those gates.
+- No credentials, tokens, URLs, service-account emails, or project-number values were recorded.
+- This entry is appended to the notepad only. No plan, product code, config, workflow, deployment manifest, or other documentation files were changed.
+
+## 2026-07-16 T10 IAM/actAs relationship correction
+- CORRECTION: ADR/evidence에서 IAM 관계와 target diff 내부 모순을 문서만 정정했다.
+- target topology 표의 `Task creator identity`가 `api-dispatcher-sa`로 잘못 기술된 부분을 정정했다. API runtime caller(`api-public-sa` 또는 Workload Identity)가 `createTask`를 호출하며, `api-dispatcher-sa`는 OIDC token subject다.
+- `oidcToken.serviceAccountEmail=api-dispatcher-sa` 계약에 필요한 두 actor를 명확히 분리했다:
+  1. API runtime caller(`api-public-sa` 또는 WIF)는 `api-dispatcher-sa`에 `iam.serviceAccounts.actAs`를 보유해야 한다(`roles/iam.serviceAccountUser` 또는 custom).
+  2. Cloud Tasks primary service agent(`service-PROJECT_NUMBER@gcp-sa-cloudtasks.iam.gserviceaccount.com`)도 `api-dispatcher-sa`에 `roles/iam.serviceAccountUser`(또는 custom `iam.serviceAccounts.actAs`)를 보유해 token을 발급해야 한다.
+- ADR Section 3.2의 중복된 Cloud Tasks service-agent 서술을 제거하고, 잘못된 "queue-creating caller must grant..." 표현을 "required IAM bindings are ..." 형식의 정확한 IAM binding 요구로 고쳤다.
+- resource diff와 evidence에서 `api-public-sa`에 필요한 target `roles/cloudtasks.enqueuer`를 'remove' 또는 'tightly remove'한다고 한 모순을 정정했다. target separated topology에서는 queue-level `roles/cloudtasks.enqueuer`와 `iam.serviceAccounts.actAs` on `api-dispatcher-sa`가 모두 필요하며, inline rollback 상태에서만 이들이 불필요하다.
+- 공식 Cloud Tasks 문서 근거: OidcToken reference — "the caller needs `iam.serviceAccounts.actAs` permission for it"(https://cloud.google.com/tasks/docs/reference/rest/v2/OidcToken); HTTP target auth guide — "grant the 'Service Account User' role to the Cloud Tasks primary service agent on this newly created service account"(https://cloud.google.com/tasks/docs/creating-http-target-tasks).
+- 수정 파일: `docs/architecture/adr/0001-private-converter-service-separation.md`, `.omo/evidence/task-10-code-frontend-improvement-final.md`, `.omo/notepads/code-frontend-improvement-final/learnings.md`(append only). 지정 외 파일은 수정하지 않았다.
+- T10/T11 checkbox, operator approval, ADR status(`proposed`) 변경 없음. GCP resource/deploy/IAM/source/config/CI 변경 없음.
+
+## 2026-07-17 23:40:29 +09:00 T11 Cloud Build execution identity read-gate recheck
+
+- staging project를 유지한 채 Cloud Build 기본 실행 서비스 계정을 다시 해결했다. 정확한 해당 서비스 계정 리소스에 대한 direct describe는 명시적으로 `iam.serviceAccounts.get` 권한 거부를 반환했다.
+- immutable candidate build는 submission 전에 중단했다. 따라서 digest, private converter Cloud Run 서비스, converter IAM, queue/API dispatcher target, OIDC positive/negative, `/ready`, 실제 HWP `%PDF-`, corrupt/timeout, duplicate, legacy/inline rollback 증거는 생성하지 않았다.
+- Direct VPC 기반은 이전 승인 범위의 staging foundation으로 유지하되, 이번 재검증에서는 IAM grant, 다른 실행 identity 사용, build/deploy, queue/API 설정 변경, production action을 수행하지 않았다.
+- 최소 외부 remediation은 활성 staging build submitter에 대해 해결된 기본 Cloud Build execution service-account resource 하나에만 `roles/iam.serviceAccountViewer`를 부여하는 것이다. 권한 있는 관리자가 적용한 뒤에도 이 read gate부터 다시 시작하고 digest-pinned build와 모든 live acceptance를 새로 검증해야 한다.
+- service-account email, project number, URL, token, bucket/object path, signed URL, raw error body는 기록하지 않았다. T11 plan checkbox는 변경하지 않았다.
+- 남은 차단 조건: 독립 재검토 0 Critical/High, read-only 재검증(live staging evidence), 명시적 사용자 승인(operator signature/date). T11은 여전히 blocked.
+
+## 2026-07-17 23:22:00 +09:00 T11 execution-approval re-preflight
+
+- 사용자 승인 범위에서 요구한 첫 단계로, 활성 `gcloud` 대상은 변경하지 않고 Cloud Build 기본 실행 서비스 계정을 해결한 뒤 현재 build submitter의 해당 정확한 리소스 read 권한을 재검증했다.
+- 결과는 `iam.serviceAccounts.get` 거부다. immutable image digest를 얻지 못하므로 converter Cloud Run deploy, converter IAM, queue/API dispatcher target, OIDC negative/positive, HWP `%PDF-`, duplicate/retry/failure, legacy/inline rollback은 모두 실행하지 않았다.
+- 권한 확대, 다른 execution identity 추측, IAM 변경, non-staging/production 작업은 하지 않았다. T11은 `[~]`로 유지하며, 권한 있는 관리자가 해결된 기본 Cloud Build execution service-account resource에 최소 read 권한을 부여한 뒤 처음부터 preflight를 재실행해야 한다.
+
+## 2026-07-18 00:33:00 +09:00 T10 current baseline correction
+- CORRECTION: ADR 1.1 Current State와 T10 evidence 1의 current baseline wording을 2026-07-17 read-only staging 관찰 및 `.github/workflows/deploy-api-cloud-run.yml`의 실제 배포 wiring과 일치하도록 정정했다.
+- 정정 전 문제:
+  - "deployment wiring is still empty" / "INTERNAL_WORKER_URL is explicitly set to empty" 표현이 queue/OIDC env가 실제 workflow에 존재함을 은폐하고, private converter target 부재를 과장해서 설명.
+  - "0/0 final re-review" 문구가 이미 완료된 것처럼 읽힐 수 있으며, independent review는 operator approval 또는 live staging evidence를 대체할 수 없다.
+- 정정 내용:
+  - ADR 1.1: workflow가 single service `--allow-unauthenticated`이며, 동일 identity로 `CONVERSION_DISPATCHER=cloud-tasks`, queue name/location, `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`을 설정하지만 `INTERNAL_WORKER_URL`/`AUDIENCE`는 비어 있어 runtime이 public API URL/localhost로 fallback한다고 명시.
+  - ADR 1.1: 이러한 코드/배포 wiring 존재 자체가 dedicated task creator, `api-dispatcher-sa`, `api-converter-sa`, private ingress, restricted egress의 존재를 의미하지 않는다고 명시.
+  - evidence 1: "Corrected Baseline Configurations (2026-07-16)"을 "(2026-07-18)"로 갱신하고, read-only baseline 관찰(Cloud Run services, Cloud Tasks queues, Cloud Scheduler jobs)과 deployment wiring을 함께 기록.
+  - evidence 2.3/2.4: "Final Independent Re-review Outcome" 및 "0/0" 문구를 제거하고, "hypothetical 0/0 ... would be a document-level design clearance"로 변경. operator approval, live staging evidence, explicit status(`proposed`) 유지를 명시.
+- 실제 민감값 노출: 없음. project ID, service-account email, URL, token, bucket/object path는 기록하지 않음.
+- 수정 파일: `docs/architecture/adr/0001-private-converter-service-separation.md`, `.omo/evidence/task-10-code-frontend-improvement-final.md`, `.omo/notepads/code-frontend-improvement-final/learnings.md`(append only). 지정 외 파일은 수정하지 않았다.
+ - T10/T11 checkbox, operator approval, ADR status(`proposed`) 변경 없음. GCP resource/deploy/IAM/source/config/CI 변경 없음.
+- 남은 차단 조건: 독립 재검토 0 Critical/High, read-only 재검증(live staging evidence), 명시적 사용자 승인(operator signature/date). T11은 여전히 blocked.
+
+## 2026-07-18 11:03:00 +09:00 T10 current baseline wording repair executed
+
+- CORRECTION: 이전 notepad 기록(2026-07-18 00:33)의 intended correction이 실제 ADR/evidence 파일에 반영되지 않아 notepad 기록과 문서 본문이 불일치했음. 이번 실행에서 문서 본문을 직접 수정해 일치시킴.
+- 수정 내용:
+  - `docs/architecture/adr/0001-private-converter-service-separation.md` 헤더 날짜를 `updated 2026-07-18 baseline correction`으로 갱신.
+  - ADR에 `### 1.1 Current State (Read-Only Baseline, 2026-07-17)` 추가: single public monolith `hwp2pdf-api`, `--allow-unauthenticated`, workflow가 `CONVERSION_DISPATCHER=cloud-tasks`, queue name/location, `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`을 동일 API runtime identity로 설정, `INTERNAL_WORKER_URL=""`/`INTERNAL_WORKER_AUDIENCE` blank로 public API URL/localhost fallback, dedicated `api-dispatcher-sa`/`api-converter-sa`, private ingress, restricted egress는 proposed target이지 live 아님을 명시.
+  - `.omo/evidence/task-10-code-frontend-improvement-final.md` Section 1 날짜를 `(2026-07-18)`으로 갱신, B항에 queue/scheduler는 별도 T5/T6/T10 evidence에서 관찰하고 queue 존재 여부가 private converter target 존재를 의미하지 않는다고 명시, 중복된 `### C. Current Deployment Wiring` 섹션 제거, D항 문구를 checked-in workflow와 정합하게 정돈.
+- T10/T11 `[~]` 상태, ADR `Status: proposed`, operator approval 필드는 그대로 유지.
+- 수정 파일: `docs/architecture/adr/0001-private-converter-service-separation.md`, `.omo/evidence/task-10-code-frontend-improvement-final.md`, `.omo/notepads/code-frontend-improvement-final/learnings.md`(append only). 지정 외 파일 수정 없음.
+- 검증 예정: 대상 문서 재독 후 `git diff --check`.
+- 남은 차단 조건: 독립 재검토 0 Critical/High, read-only 재검증(live staging evidence), 명시적 사용자 승인(operator signature/date). T11은 여전히 blocked.
+
+## 2026-07-18 00:33:00 +09:00 T10 target topology Task creator identity consistency check
+- 검사 목적: ADR target topology 표의 `Task creator identity`가 OIDC token subject(`api-dispatcher-sa`)와 혼동되지 않았는지 확인.
+- 읽은 파일: `docs/architecture/adr/0001-private-converter-service-separation.md`, `.omo/evidence/task-10-code-frontend-improvement-final.md`, `.omo/notepads/code-frontend-improvement-final/learnings.md`.
+- 소스 확인: `apps/api/src/conversion/queue.ts`(또는 동일 모듈)에서 `createTask`는 API runtime ADC identity로 호출되며 `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`은 converter의 `requireWorkerOidc`가 기대하는 OIDC caller email(`api-dispatcher-sa`)로 사용됨.
+- ADR 2.1 target topology 표 확인: `Task creator identity` = `API runtime task creator (api-public-sa or Workload Identity)`로 정정되어 있음. `OIDC token source` = `api-dispatcher-sa via Cloud Tasks queue`로 별도 분리되어 있음.
+- ADR 3.1 확인: 세 identity(`api-public-sa` task creator, `api-dispatcher-sa` OIDC subject, `api-converter-sa` runtime)가 명확히 분리되어 있음.
+- evidence 확인: task creator = `api-public-sa` / OIDC subject = `api-dispatcher-sa` 서술이 일관됨. `api-public-sa`의 target state에 `roles/cloudtasks.enqueuer`와 `iam.serviceAccounts.actAs` on `api-dispatcher-sa`가 추가된다고 기술되어 있음.
+- 교차 검증: ADR과 evidence 사이에 `api-dispatcher-sa`가 `createTask` caller 또는 `cloudtasks.enqueuer` holder라는 모순은 없음. ADR 3.2의 "required IAM bindings" 표현이 유지되며 "queue-creating caller must grant" 오류는 남아 있지 않음.
+- git diff --check: whitespace 오류 없음.
+- 수정: 이번 검사에서 실제 오류는 발견되지 않았으므로 문서 수정 없음. notepad에만 append 기록.
+- T10/T11 checkbox, operator approval, ADR status(`proposed`) 변경 없음. GCP resource/deploy/IAM/source/config/CI 변경 없음.
+- 남은 차단 조건: 독립 재검토 0 Critical/High, read-only 재검증(live staging evidence), 명시적 사용자 승인(operator signature/date). T11은 여전히 blocked.
+
+## 2026-07-16 15:54:58 +09:00 T10 topology identity correction
+- ADR Section 2.1의 target `Task creator identity`는 API runtime task creator(`api-public-sa` 또는 Workload Identity)이며, 이 주체가 ADC로 `createTask`를 호출한다.
+- 같은 표의 `OIDC token source`인 `api-dispatcher-sa`는 Cloud Tasks queue가 `oidcToken.serviceAccountEmail`에 사용하는 OIDC token subject이지 application runtime 또는 task creator가 아니다.
+- ADR Sections 2.3, 3.1, 3.2, 3.3, 6.1, 6.2, 7.2와 T10 evidence는 API runtime caller와 Cloud Tasks primary service agent 양쪽의 `iam.serviceAccounts.actAs` on `api-dispatcher-sa` 계약을 유지한다. ADR status는 `proposed`, operator approval은 미완료, T10/T11은 blocked 상태다.
+
+## 2026-07-16 T10 corrected IAM/Cloud Tasks independent re-review
+- VERDICT: REJECT. Critical 0 / High 1. API runtime ADC가 `createTask`를 호출하고 queue-level `roles/cloudtasks.enqueuer`를 유지해야 한다는 계약, `oidcToken.serviceAccountEmail = api-dispatcher-sa`, API runtime caller와 Cloud Tasks primary service agent 양쪽의 `iam.serviceAccounts.actAs` on `api-dispatcher-sa`, `api-dispatcher-sa`의 converter service-level `roles/run.invoker`, `api-converter-sa`의 별도 runtime/storage 책임은 코드 및 공식 Cloud Tasks/Cloud Run 계약과 일치한다.
+- High: ADR Sections 2.3/3.1/7.2/8은 converter가 OIDC caller email `api-dispatcher-sa`를 검증한다고 요구하지만, Sections 4.1과 7.1의 converter 환경 계약은 `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`을 설정하지 않는다(`N/A`). 실제 `getExpectedServiceAccountEmail()`은 이 설정이 없으면 `null`을 반환하고 `requireWorkerOidc`는 email 검증을 건너뛴다. 따라서 문서가 약속한 audience/issuer/email triple-match와 배포 환경 계약이 모순된다. T11 전 converter에도 expected caller email을 필수로 설정하고 missing-value fail-closed preflight/startup 조건으로 고정해야 한다.
+- `PRIVATE_RANGES_ONLY`가 일반 인터넷 egress를 막지 않는다는 명시는 ADR Sections 5.2/5.4 및 preflight에 유지되어 있다. Internal ingress는 same-project Cloud Tasks가 기본 `run.app` URL을 사용할 때 내부 트래픽으로 인정되고, IAM `roles/run.invoker`는 별도로 적용된다는 공식 Cloud Run 계약과도 일치한다.
+- ADR은 `proposed`, operator approval checkbox는 비어 있고 T10/T11은 `[~]`/blocked다. 이 재검토는 operator approval 또는 live staging evidence를 대체하지 않으며 T11 완료/시작 판정이 아니다.
+
+## 2026-07-16 T10 expected caller email contract correction
+- 실제 코드 근거를 문서에 반영했다: `getExpectedServiceAccountEmail()`은 `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL`이 비어 있으면 `null`을 반환하고, 현재 `requireWorkerOidc`는 expected email이 truthy일 때만 token email을 비교한다. 따라서 현재 구현이 missing-value fail-closed라고 주장하지 않는다.
+- ADR과 T10 evidence에서 Public API dispatcher와 converter 모두 `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL=api-dispatcher-sa@[PROJECT].iam.gserviceaccount.com`을 필수로 설정하고 두 값이 정확히 같아야 한다는 target contract를 고정했다. 누락 또는 불일치는 converter startup/readiness나 외부 deployment preflight의 hard failure이며 Public API cutover 금지 조건이다.
+- T11 staging acceptance에는 expected email 요청 수락, 다른 email 요청 거부, audience/issuer/email triple-match를 추가했다. 기존 API runtime task creator, queue enqueuer 유지, dual `actAs`, `api-dispatcher-sa`의 converter service-resource `run.invoker`, `PRIVATE_RANGES_ONLY` 비차단 설명은 보존했다.
+- ADR status는 계속 `proposed`이며, 수정 후 독립 재검토 0 Critical/High, 명시적 operator approval, live staging evidence가 여전히 blocking이다. 이 문서 정정은 T11 시작·완료 또는 현재 코드의 fail-closed 구현을 의미하지 않는다.
+
+## 2026-07-16 T7 runtime browser-QA blocker confirmation
+- 375×812 Chromium에서 로그인 폼은 활성으로 렌더링되지만 `AuthProvider`의 `onAuthStateChanged` 콜백이 실행되지 않아 `auth-nav-loading` 상태가 유지됐다.
+- 로그인 제출 뒤 Firebase Identity Toolkit 및 Secure Token 요청은 0건이었다. 따라서 T8에서 유효했던 REST `page.route` fixture는 이 런타임의 SDK 초기화 이전 경계를 넘을 수 없다.
+- 인증 메뉴 DOM을 임의로 주입하거나 제품 코드, Firebase 환경값, credential, token을 변경하지 않았다. T7은 실제 인증 브라우저 관찰을 제공하는 별도 승인된 안전한 QA 경로가 확보될 때까지 `[~]` 상태를 유지한다.
+
+## 2026-07-16 T4 Cloud Tasks inline dispatcher timeout 검증
+- 정확한 표적 명령 `pnpm --filter api test -- cloud-tasks-dispatcher`를 최초 1회와 추가 반복 10회, 총 11회 실행했고 매회 1개 파일 19/19가 통과했다. Vitest 자체 실행 시간은 약 0.90–1.15초, PowerShell에서 측정한 반복별 전체 프로세스 시간은 약 2.66–3.28초였으며 timeout, unhandled rejection, 열린 handle 경고는 재현되지 않았다.
+- 전체 명령 `pnpm --filter api test`도 16개 파일 324/324가 3.72초에 통과해 상위 기준선과 일치했다.
+- ast-grep 구조 검색 `ast-grep --pattern 'void $PROMISE.catch($HANDLER)' --lang ts apps/api/src/services/cloud-tasks-dispatcher.ts`는 inline 분기의 `void convertJobToPdf(...).catch(...)` 한 곳을 확인했다. 이 catch가 비동기 변환 실패 rejection을 소비하고, `convertJobToPdf`는 실패 상태 기록 후 throw한다.
+- upload route와 maintenance recovery는 `enqueueConversionJob`을 await하지만 비동기 dispatch 접수 후 202 또는 enqueue 집계를 진행한다. 따라서 inline fallback도 변환 완료/실패를 호출자에게 propagate하기보다 fire-and-forget으로 유지하는 것이 기존 async API 및 Cloud Tasks worker 계약과 일치한다.
+- runtime timeout이 재현되지 않았으므로 failing-first 조건이 성립하지 않아 API production/test source는 수정하지 않았다. agent-lsp blast-radius는 daemon workspace가 `apps/web`에 고정되어 API 파일을 분석하지 못했고 root 재시작도 10초 내 기동 실패했으므로, codegraph/Serena의 실제 호출자 결과와 Vitest 런타임 검증을 사용했다.
+- 최종 기록 범위 확인과 함께 동일 표적 명령을 1회 더 실행해 19/19(0.857초) 통과했다. 따라서 이 조사에서의 정확한 표적 반복 합계는 12회이며 12/12 모두 정상 종료했다.
+
+
+## 2026-07-16 T10 evidence chronology correction
+- `.omo/evidence/task-10-code-frontend-improvement-final.md`의 section 2를 전면 다시 써서 과거 REJECT findings와 최종 re-review 결론이 혼동되지 않도록 했다.
+- 원본 독립 검토: REJECT Critical 1 / High 6 / Medium 3. 이 findings는 문서 정정의 원인이 된 historical record로 보존했다.
+- 중간 재검토: IAM/topology/egress 정정 후 REJECT Critical 0 / High 1. 남은 High는 converter의 `CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL` 환경 계약 누락으로 인해 expected caller email triple-match가 fail-closed가 아니었다.
+- 최종 독립 재검토: expected caller email contract correction 이후 0 Critical / 0 High / 0 Medium.
+
+## 2026-07-17 T6 staging Firestore index deployment
+
+- `FirestoreBoardStore.listPosts`의 category path는 `category == value`와 `createdAt DESC`를 결합하므로 staging의 `boardPosts` COLLECTION composite index도 정확히 `category ASCENDING, createdAt DESCENDING`이어야 한다. category 없는 path는 단일 `createdAt DESC` 정렬이므로 별도 composite index가 필요하지 않다.
+- Firebase index-only dry-run이 Service Usage 소비 권한 403으로 막히면 broad deploy나 rules deploy로 우회하지 말고, 승인된 단일 `gcloud firestore indexes composite create`로 대상 index만 생성한 뒤 목록 조회로 상태를 판정한다.
+- create 명령의 대기 시간이 도구 timeout을 넘더라도 동일 생성 명령을 재실행하지 않는다. 후속 `gcloud firestore indexes composite list`에서 collection group, 두 선언 필드 순서, `READY`를 함께 확인해야 한다. Firestore가 자동 추가한 `__name__ DESCENDING` tie-breaker는 선언 불일치가 아니다.
+- 2026-07-17 staging `hwp2pdf-499911`에서 boardPosts index `category ASCENDING, createdAt DESCENDING`를 `READY`로 직접 확인했고, 관련 API board tests는 50/50 및 API build는 통과했다. jobs index와 Firestore rules는 변경하지 않았다.
+- 0/0 re-review는 ADR/evidence에 대한 설계 검토 통과일 뿐, 현재 배포 완료를 의미하지 않으며 operator approval과 live staging evidence를 대체하지 않는다.
+- 남은 T11 차단 조건: live staging evidence(Cloud Tasks actAs, converter ingress/egress, OIDC triple-match, converter-only 404, `/ready` probe, HWP smoke test)와 ADR Section 10.2의 명시적 operator approval 서명/날짜.
+- ADR status는 `proposed`로 유지했고, T10/T11 계획 상태, source/config/infra/CI는 변경하지 않았다.
+
+## 2026-07-16 CRLF/trailing-whitespace cleanup
+- `git diff --check`의 오류는 지정된 `apps/api/src/routes/v1.download-auth.test.ts`와 `docs/INDEX.md`의 working-tree CRLF 줄끝에서만 발생했다. API 테스트 파일은 LF 557개 중 CRLF 521개가 혼재했고 문서 파일은 CRLF 83개 전체였다.
+- 두 파일만 UTF-8 BOM 없음/LF-only로 정규화했으며 코드·문서 의미는 변경하지 않았다. `git diff --ignore-space-at-eol` 결과는 줄끝 정규화 전의 실제 변경과 동일했다.
+- 최종 검증: `git diff --check` exit 0, `pnpm --filter api test -- v1.download-auth.test.ts` 1 file / 24 tests 통과. agent-lsp는 10초 내 daemon 기동 실패로 blast-radius 요청을 초기화하지 못했으며 codegraph 구조 탐색은 완료했다.
+
+## 2026-07-16 T4 cleanup claim 반환 계약 보정
+- `claimExpiredUploadObject`는 one-time `cleanupClaimedAt`을 persistence에 기록하면서도 이전 레코드를 반환해 호출자가 관찰하는 성공 결과와 저장 상태가 달랐다. Memory/Firestore 모두 저장에 사용한 동일한 claimed `UploadSessionRecord`를 반환해야 계약이 일치한다.
+- 회귀 테스트는 exact timestamp equality 대신 `cleanupClaimedAt`의 문자열 존재와 ISO round-trip을 검증하고, `runMaintenance` 삭제 경계에서 사용하는 `objectPath`가 보존됨을 함께 단정한다.
+- RED는 maintenance 표적 suite 19개 중 두 store 성공 반환 경로 2개만 실패했고, 수정 후 19/19가 통과해 중복 claim, identity mismatch, 완료/비적격 세션의 `null` 동작이 유지됨을 확인했다.
+
+## 2026-07-16 Cloud Tasks inline dispatcher timeout regression
+- 정확한 기존 테스트 실행에서 `cloud-tasks-dispatcher.test.ts > inline mode > calls convertJobToPdf directly without network`가 5초 timeout으로 재현됐다. 테스트는 `FIREBASE_ADMIN_MODE=adc`를 설정한 뒤 실제 `createJob`을 호출했고, `job-store.ts`는 모듈 로드 시 backend를 고정 선택하므로 환경에 따라 Firestore I/O를 타는 순서·환경 의존 대기 경로가 있었다.
+- production dispatcher는 변경하지 않았다. 테스트가 `getJob`과 `convertJobToPdf`를 모두 모킹하도록 바꾸고, conversion promise를 의도적으로 영구 pending으로 두어 enqueue가 변환 완료를 기다리지 않고 `{ mode: "inline" }`로 resolve하는 fire-and-forget 계약을 직접 검증했다.
+- agent-lsp daemon은 10초 내 시작되지 않아 blast-radius 호출이 초기화되지 않았다. CodeGraph의 호출 경로(`enqueueConversionJob` -> `getJob` / `convertJobToPdf`)와 테스트 파일 의존성 결과를 fallback으로 사용했다.
+- 수정 후 diagnostics 0건, dispatcher suite 19/19, API 전체 324/324, API typecheck exit 0, root test shared 47/47 + API 324/324 + web 173/173이 통과했다.
+
+## 2026-07-16 23:03:43 +09:00 T4 dispatcher contract correction
+- `resetStuckJob(jobId)`의 구현은 cutoff 이전 stale processing 작업을 최대 100개까지 transaction-safe recovery batch로 복구하고, 요청한 ID가 실제 복구 결과에 포함될 때만 `true`를 반환한다. 단일 작업 reset처럼 읽히던 JSDoc만 이 계약에 맞게 수정했으며 제품 동작과 테스트는 변경하지 않았다.
+- 검증: `pnpm --filter api test -- cloud-tasks-dispatcher` 결과 dispatcher 19/19 통과.
+
+## 2026-07-16 23:46 +09:00 fresh verification pass
+- 단위 테스트: shared 47/47, API 324/324, web 173/173 전부 통과했다.
+- 타입 검사: API `pnpm --filter api typecheck`, web `pnpm --filter web typecheck`가 통과했다.
+- 린트: `pnpm --filter web lint`가 통과했다.
+- 빌드: `pnpm -r build`가 통과했다.
+- LSP 진단: `apps/api/src/services/cloud-tasks-dispatcher.ts`와 `apps/web/src/lib/api-client.ts`에서 오류 0건이었다.
+- 줄끝/공백: `git diff --check`가 exit 0으로 종료됐다.
+- `ocr review`는 300초 실행 제한을 초과했고, 매우 큰 사전 변경 worktree 전체를 스캔하는 동안 터미널 판정을 출력하지 않았다. 이는 아직 검증 도구가 아닌 한계(limitation)이며 코드 품질 승인으로 해석할 수 없다.
+- 위 검증은 T1–T4, T8–T9의 로컬 테스트·빌드·진단 건강도를 재확인한 것이다. T5–T7, T10–T12, F1–F4의 외부 게이트(GCP 승인·staging 상태·Firebase 인증·operator approval)는 풀리지 않았고, 이 기록만으로는 해당 항목의 `[~]` 상태를 변경하거나 최종 wave를 승인할 수 없다.
+
+## 2026-07-16 T4 independent verification (post-cleanup-claim-return)
+
+- VERDICT: APPROVE. 현재 `claimExpiredUploadObject` 구현과 회귀 테스트는 transaction-safe upload-session cleanup claim 계약을 충족한다.
+- MemoryJobStore(apps/api/src/services/job-store.ts:461)와 FirestoreJobStore(apps/api/src/services/job-store.ts:739) 모두 one-time `cleanupClaimedAt` 기록 후 저장에 사용한 동일한 `UploadSessionRecord`를 반환한다. 즉 post-claim record는 persistence된 record와 동일하다.
+- 성공 claim 반환값은 `cleanupClaimedAt`과 검증된 `objectPath`를 모두 유지한다. `runMaintenance`(apps/api/src/services/maintenance-service.ts:47-53)는 claim.objectPath만 `deleteExactStoredObject` 삭제 대상으로 사용해 scan/delete 경쟁 시 다른 객체가 삭제되지 않는다.
+- 중복 claim, identity mismatch(현재 `hasSameUploadCleanupIdentity` exact match 실패), terminal 상태(이미 `completedAt` 또는 `expired` 아닌 `completed`)에서는 Memory/Firestore 모두 `null`을 반환하거나 transaction zero-write로 경쟁을 억제한다. Firestore transaction은 re-read 후 `isUploadCleanupEligible`과 identity 재확인을 거친다.
+- 최신 검증 결과(2026-07-16):
+  - `pnpm --filter api test -- job-store.maintenance.test.ts` → 1 file, 19/19 pass
+  - `pnpm --filter api test` → 16 files, 325/325 pass
+  - `pnpm --filter api typecheck` → exit 0
+  - LSP diagnostics: `apps/api/src/services/job-store.ts` 0건, `apps/api/src/services/job-store.maintenance.test.ts` 0건
+  - `git diff --check` → exit 0
+- Firestore emulator 또는 staging/production conflict retry, Cloud Tasks integration, 실제 GCS 삭제는 이번 로컬 검증에서 실행하지 않았다. T5–T7/T10–T12/F1–F4의 외부 차단 상태는 해소되지 않았다.
+
+## 2026-07-17 11:05:00 +09:00 read-only staging baseline observation
+
+- Read-only facts observed today. No mutations were performed.
+- Verified credentials/project scope: `gcloud` is installed; an active account exists; project `hwp2pdf-499911` is readable.
+- Cloud Run services: listing returned exactly one API service, `hwp2pdf-api`, in `asia-northeast3`. No converter service was returned by the service listing.
+- Cloud Scheduler jobs: listing returned no jobs.
+- Cloud Tasks queues: listing returned no queues.
+- Firestore composite indexes: listing returned only the existing `jobs` index on `ownerType` ascending, `userId` ascending, `createdAt` descending in `READY` state. No composite index for `boardPosts` category/createdAt was returned.
+- Conclusion: these observations corroborate the existing external deployment/approval gates for T5 (Cloud Scheduler/IAM), T6 (Firestore board index), T10 (converter service absence), and T11 (live staging evidence gap). They do not resolve any of those gates.
+- No credentials, tokens, URLs, service-account emails, or project-number values were recorded.
+- This entry is appended to the notepad only. No plan, product code, config, workflow, deployment manifest, or other documentation files were changed.
+
+
+## 2026-07-17 00:41:36 +09:00 read-only API health verification
+
+- Read-only verification label: API `/health` probe observation. No mutations were performed and no external gate is cleared by this entry.
+- Direct request to the API `/health` route returned HTTP 200 with a non-sensitive healthy status payload. The exact endpoint URL, project number, service-account email, and any token or credential value were not recorded.
+- T5 remains blocked because no Cloud Scheduler jobs and no Cloud Tasks queues exist in staging, so the OIDC-protected maintenance endpoint has no scheduled caller and no queue to enqueue recovered jobs.
+- T6 remains blocked because no `boardPosts` category+createdAt composite index exists in staging; only the existing `jobs` index is in `READY` state.
+- T10 remains blocked because the service listing still returns exactly one API Cloud Run service and no converter service.
+- T11 remains blocked because the converter service, Cloud Tasks queue, and live staging evidence (HWP smoke, OIDC triple-match, rollback) are still absent.
+- This observation does not clear any external deployment/approval gate and does not justify completing T5, T6, T10, T11, or any final-wave task.
+- No credentials, tokens, exact endpoint URLs, service-account emails, project numbers, signed URLs, or GCS object paths were recorded.
+
+- This entry is appended to the notepad only. The plan checkbox state (`- [x] / - [~]`) was not changed, and no product code, config, workflow, deployment manifest, evidence file, history file, docs/sessions, or docs/INDEX.md was modified.
+- 2026-07-17: `apps/api/src/services/job-store.ts`는 코드 바이트를 변경하지 않고 CRLF를 LF로만 정규화했다.
+
+## 2026-07-17 T6 raw index and empty staging query correction
+
+- Firestore composite index 목록의 PowerShell 역직렬화 결과에는 최상위 `collectionGroup` 속성이 없을 수 있다. raw JSON을 파싱한 뒤 resource name의 collection-group 경로와 ordered fields를 함께 검사해야 하며, 잘못된 `collectionGroup` 필터로 나온 기존 "boardPosts index 없음" 결과는 false negative다.
+- staging raw listing에서 `boardPosts(category ASCENDING, createdAt DESCENDING, __name__ DESCENDING)` index 1개가 `READY`임을 exit 0으로 확인했다. 내부 index ID와 프로젝트 식별자는 기록하지 않았다.
+- unfiltered/general/qna/notice의 `createdAt DESCENDING` query를 각각 offset 0/2, limit 2로 읽기 전용 실행했고 8/8 요청이 `readTime`을 반환했다. 이는 query execution 증거이며 board document를 생성·수정·삭제하지 않았다.
+- 네 query path 모두 0개 문서였으므로 staging 데이터의 최신순과 페이지 간 무중복/무누락은 관찰할 수 없었다. 빈 성공 응답과 정렬·pagination 결과 검증을 구분해야 한다.
+- 로컬 계약은 `pnpm --filter api test -- board` exit 0, 2 files 50/50 tests와 `pnpm --filter api build` exit 0으로 재검증했다. raw READY, 네 ordered/paginated query path의 실제 서버 실행, 로컬 정렬·pagination 계약을 함께 충족해 T6를 완료하되, 빈 staging 데이터로 문서 기반 순서·페이지 결과를 관찰하지 못한 한계는 명시적으로 유지한다.
+
+## 2026-07-17 read-only verification closure
+
+- Read-only facts observed today. No mutations were performed.
+- Verified credentials/project scope: `gcloud` is installed; an active account exists; project `hwp2pdf-499911` is readable.
+- Cloud Run services: listing returned exactly one API service, `hwp2pdf-api`, in `asia-northeast3`. No converter service was returned by the service listing.
+- Cloud Scheduler jobs: listing returned no jobs.
+- Cloud Tasks queues: listing returned no queues.
+- Firestore composite indexes: the default listing output showed only the existing `jobs` index on `ownerType` ascending, `userId` ascending, `createdAt` descending in `READY` state. A separate raw JSON parse later confirmed one `boardPosts` composite index on `category` ascending, `createdAt` descending in `READY` state. Both observations are recorded as distinct facts.
+
+### T6 checklist correction
+
+- T6 was corrected from a completed-with-limitations state back to `[~]`/blocked. The `boardPosts` index exists in staging and is `READY`, but the staging query returned zero documents, so document-based ordering, pagination boundaries, and production data consistency could not be observed. The plan therefore keeps T6 as `[~]` until live staging data validates the actual board list behavior.
+
+### Current blocking status
+
+- T5 remains `[~]`: Cloud Scheduler jobs and Cloud Tasks queues are absent in staging, so the OIDC-protected maintenance endpoint has no scheduled caller and no queue target. Repository code and Supertest OIDC tests are complete, but live staging Scheduler/IAM/Cloud Run deployment is pending explicit user approval.
+- T6 remains `[~]`: repository declaration and local tests pass, and the staging index is `READY`, but empty staging data prevents behavioral validation of ordered/paginated results.
+- T7 remains `[~]`: 375x812 Chromium shows `auth-nav-loading` because `AuthProvider` `onAuthStateChanged` does not execute, and no Firebase Identity Toolkit/Secure Token requests are made. A separately approved safe authentication QA path is required.
+- T10 remains `[~]`: the independent re-review reached 0 Critical / 0 High after the expected-caller-email contract correction, but the ADR status stays `proposed` and the operator approval/live staging evidence gates are not cleared.
+- T11 remains `[~]`: cannot start until T10 operator approval, independent re-review, and live staging evidence are all resolved.
+- T12 and F1-F4 remain `[~]` because their prerequisites (T5-T7, T10-T11) are still blocked.
+
+### Scope guard confirmation
+
+- No Cloud Scheduler, Cloud Tasks queue, Firestore index, IAM binding, Cloud Run service, or source/config change was executed. The only change made by this entry is the append to this notepad.
+- No credentials, tokens, exact endpoint URLs, service-account emails, project numbers, signed URLs, or GCS object paths were recorded.
+
+## 2026-07-17 10:03 +09:00 T5/T6 read-only staging revalidation
+
+- 범위는 staging의 API Cloud Run, maintenance Scheduler/OIDC/IAM, Cloud Tasks queue/task, Firestore `boardPosts` composite index와 query behavior로 제한했다. 리소스·IAM·Scheduler·Firestore 데이터 mutation은 수행하지 않았다.
+- 최신 리소스 관찰은 API Cloud Run 1개, converter 0개, Scheduler job 1개, Tasks queue 1개, `boardPosts(category ASCENDING, createdAt DESCENDING, __name__ DESCENDING)` READY index 1개다.
+- T5 OIDC wiring 중 확인된 항목: Scheduler는 ENABLED, POST path는 `/internal/maintenance/run`, job audience는 endpoint-specific target과 일치하고 API의 `MAINTENANCE_OIDC_AUDIENCE`와도 일치한다. API numeric subject는 Scheduler service account immutable unique ID와 일치하며 issuer는 expected default/config contract에 맞는다. 최근 Scheduler/Cloud Run request logs에는 Scheduler user-agent의 HTTP 200 실행이 반복 관찰됐다.
+- T5 recovery/enqueue 상관관계: 7일 로그에서 aggregate `attempted=1, recovered=1, skipped=0, failed=0`인 maintenance run 1회가 있었고, 같은 시각 생성된 POST/OIDC Cloud Task 1개가 남아 있다. 이는 recovery-to-enqueue 관찰 근거다. 다만 현재 queue는 PAUSED이고 해당 task의 dispatch/response count는 0이므로 실제 worker dispatch 완료 증거는 아니다.
+
+## 2026-07-17 API OCR 후보 계약 독립 재검토
+
+- sender `getWorkerAudience()`와 verifier `getExpectedAudience()`는 explicit `INTERNAL_WORKER_AUDIENCE`를 우선하고, 없으면 동일한 `createInternalWorkerUrl()`을 호출한다. 공통 URL resolver는 `INTERNAL_WORKER_URL` → `INTERNAL_API_URL` → runtime `PORT` localhost 순서이므로 네 fallback의 제품 코드 drift는 없었다.
+- 기존 테스트는 `INTERNAL_API_URL`과 `PORT`에서만 sender/verifier 동치를 직접 단정했고 explicit audience와 worker URL에서는 sender 값만 검사했다. 두 테스트를 낮은 우선순위 값도 함께 설정한 precedence 케이스로 보강해 네 단계 모두 sender/verifier 동치를 직접 검증하도록 했다. 제품 구현은 변경하지 않았다.
+- invalid HWP signature 경로의 `removeRejectedUpload()`은 cleanup 예외를 삼키고 고정 이벤트명만 기록하므로 원래 `422 invalid_file_signature`와 한국어 메시지를 보존하며 file path, raw cleanup error, token, 내부 URL을 로그나 응답에 노출하지 않는다. 기존 cleanup 실패 회귀 테스트가 정확한 422 코드·메시지를 직접 확인해 추가 수정은 필요하지 않았다.
+- agent-lsp blast-radius와 재시작은 daemon이 10초 내 기동하지 않아 사용할 수 없었다. Serena 심볼/참조 결과와 범위 제한 테스트 검색으로 호출 관계를 확인했고, 별도 LSP diagnostics는 검토·수정 파일 4개 모두 0건이었다.
+- 최신 검증: 표적 테스트 2 files/48 tests 통과, 전체 API 17 files/331 tests 통과, `pnpm --filter api typecheck` exit 0.
+- T5 IAM/cleanup blocker: API Cloud Run ingress는 `all`이고 service IAM에 `allUsers` invoker가 있으며 Scheduler service account 자체에는 service-level `roles/run.invoker`가 없다. 따라서 Scheduler 전용 최소 IAM 경계 acceptance를 충족하지 않는다. 최근 GCS object-delete audit entry도 0건이고 aggregate `recovered`는 enqueue와 delete를 구분하지 않으므로 실제 expired-session cleanup/delete 및 재호출 idempotency의 staging 증거가 없다. 현재 판정은 **T5 BLOCKED**다.
+- T6 확인 항목: raw composite index listing에서 정확한 `boardPosts` index 1개가 READY였다. Firestore `runQuery`로 unfiltered/general/qna/notice 각각 `createdAt DESCENDING`, limit 2, offset 0/2를 실행했고 8/8 query가 readTime을 반환했다.
+- T6 behavior blocker: 네 경로에서 staging 문서는 모두 0개였다. 따라서 실제 문서의 최신순, 페이지 경계, 페이지 간 무중복·무누락을 Memory store 결과와 대조할 수 없다. index READY와 query execution은 통과하지만 plan의 document-based ordering/pagination acceptance는 충족되지 않아 현재 판정은 **T6 BLOCKED**다.
+- fresh local contract checks: maintenance route 9/9 tests, board store/API 50/50 tests가 통과했다. 이는 OIDC rejection/idempotency 및 query-chain 계약을 보완하지만 최신 staging behavior의 대체물로 사용하지 않았다.
+- 비밀값 보호: token, exact URL, service-account email, immutable subject 원문, bucket/object path, project number, internal index/task identifiers는 기록하지 않았다.
+
+## 2026-07-17 10:16:42 +09:00 T10 independent read-only acceptance re-review
+
+- 검토 경계는 현재 Public API → Cloud Tasks → 현재 worker target과, ADR이 제안하는 Public API → Cloud Tasks → private converter → GCS/Firestore 경로다. ADR/config/workflow/code 및 Cloud Run, Cloud Tasks, IAM, bucket의 read-only 관찰만 대조했으며 GCP mutation, deploy, traffic switch, task 실행, 변환은 수행하지 않았다.
+- **PASS — 설계 문서와 threat model:** ADR은 public API와 고위험 LibreOffice converter의 서비스·namespace·runtime identity 분리, HWP parser/RCE·forged worker·confused deputy·storage overwrite·로그 노출 위협과 완화를 문서화한다. 상태는 의도대로 `proposed`다.
+- **PASS — task creator identity 계약:** 실제 `createTask` caller는 API runtime identity/ADC(WIF 포함)이고, task의 OIDC `serviceAccountEmail`은 token subject다. ADR은 `api-dispatcher-sa`를 createTask caller가 아니라 OIDC subject로 구분하며, API runtime caller와 Cloud Tasks service agent가 각각 subject SA에 `actAs`를 가져야 하는 dual-grant를 명시한다. 이 정정은 코드의 enqueue call path와 일치한다.
+- **PASS — 최소 IAM 및 resource diff의 목표 계약:** API runtime에는 queue-level enqueuer + dispatcher subject actAs, dispatcher subject에는 converter service-level invoker, converter runtime에는 Firestore/GCS object 작업만 부여하고 owner/editor/storage admin 및 converter의 task creation/signed-URL 권한을 금지한다. API, converter, dispatcher 세 identity와 rollback 시 제거 순서가 문서화돼 있다.
+- **PASS — ingress/egress 및 fail-closed 목표 계약:** converter internal ingress, unauthenticated invoker 금지, all-traffic VPC/Direct VPC egress와 public internet deny, Google API allow path가 선택돼 있다. audience/issuer/expected-email triple-match, expected email 누락·불일치 시 startup/readiness 또는 deployment preflight 실패, converter-only 404와 `/ready` 조건도 명시돼 있다.
+- **PASS — rollout/rollback, 비용 및 장애 모드 설계:** concurrency/max instance 제한, bounded retry, idempotent claim, retryable/terminal 분류, pinned revision, converter-only rollback, API inline fallback, cold-start/리소스 비용 선택이 기록돼 있다. 최종 독립 re-review 기록은 corrected ADR/evidence에 대해 Critical 0 / High 0 / Medium 0이다.
+- **PASS — current baseline 존재 확인:** fresh read-only 관찰에서 Cloud Run API는 정확히 1개, converter는 0개, queue는 1개, bucket과 API runtime identity는 식별 가능했다. bucket에는 public IAM binding이 관찰되지 않았지만 UBLA는 비활성이고 PAP는 강제되지 않았다. API runtime에는 effective project-level queue enqueuer가 있고 owner/editor는 관찰되지 않았다.
+- **BLOCKED — baseline 문서의 최신성:** ADR/evidence의 corrected baseline은 worker URL/audience가 비어 있고 queue가 없거나 미확정인 과거 상태를 서술한다. 현재 API에는 worker URL/audience/OIDC subject 설정이 존재하고 queue도 존재한다. 다만 남아 있는 task target은 현재 public API이며 OIDC subject와 API runtime identity도 동일하다. 따라서 설정 존재는 private converter wiring 증거가 아니고, current→target diff의 queue `Add` 및 일부 current env 문구는 fresh baseline과 불일치한다. 제품/ADR/evidence 수정 금지 범위이므로 이번 검토에서는 blocker로만 기록한다.
+- **BLOCKED — 실제 private topology/IAM:** converter Cloud Run과 dedicated dispatcher/converter identities가 없고, 현재 API runtime과 OIDC subject가 분리되지 않았다. 현재 monolith subject에 API runtime 및 Cloud Tasks service agent의 actAs가 관찰되더라도 target `api-dispatcher-sa`에 대한 dual-grant, converter service-level invoker, converter runtime 최소 GCS/Firestore 권한을 증명하지 않는다. converter가 없으므로 internal ingress, no-public-invoker, VPC egress deny/Google API allow, converter-only route, readiness도 관찰할 대상이 없다.
+- **BLOCKED — expected-email 및 rollout live evidence:** 현재 API의 audience/subject 설정 존재와 코드의 issuer/audience/email 검사는 target converter의 fail-closed 실행 증거가 아니다. 별도 converter의 expected email exact match·wrong-email reject·missing-email preflight failure, 실제 createTask authorization, HWP smoke, duplicate/retry, converter rollback은 모두 미검증이다.
+- **BLOCKED — operator approval:** ADR Section 10.2 및 evidence의 approval signature/date가 비어 있고, 승인 문구/session ordinal도 기록되지 않았다. 사용자 명시 승인 없이 T10 완료 처리 또는 T11 provisioning/implementation 시작은 불가하다.
+- **T5 상태의 분리된 영향:** 현재 API service는 ingress `all`이고 public invoker가 있으며, queue는 PAUSED이고 남은 OIDC task는 dispatch 0회로 현재 public API를 대상으로 한다. public invoker는 현행 API/worker의 넓은 공격면을 재확인하지만 proposed converter threat model을 무효화하지는 않는다. PAUSED queue는 안전한 비변경 관찰 상태인 동시에 target OIDC dispatch, converter invocation, failure/recovery 증거를 만들 수 없으므로 T10 rollout/T11 preflight를 차단한다.
+- **최종 판정:** T10의 문서 설계, threat model, 목표 IAM/네트워크/rollout 계약, 독립 review verdict, API/queue/bucket/runtime baseline의 존재 확인은 PASS다. 그러나 baseline 문서 최신화, 실제 세 identity/private converter topology, live fail-closed·egress·rollback evidence, 명시적 operator approval은 BLOCKED다. 따라서 T10은 `[~]`를 유지하고 T11은 시작할 수 없다.
+- 기밀 보호: exact URL/audience, service-account email, project number, bucket/object path, token, task/resource identifier는 기록하지 않았다.
+
+## 2026-07-17 T5 maintenance cursor-starvation local fix
+
+- Firestore upload-session primitive는 스캔한 마지막 문서 cursor를 이미 반환하고 transaction 안에서 완료/claim/만료/identity를 재검증했다. starvation 원인은 `runMaintenance`가 첫 cleanup page의 cursor를 소비하지 않은 orchestrator 경계였다.
+- T4 primitive와 claim/delete 계약은 유지하고 orchestrator가 후보를 batch limit만큼 모으거나 cursor가 끝나거나 고정 10-page scan bound에 도달할 때까지 cursor를 소비하도록 최소 수정했다. bound 뒤 cursor가 남으면 `hasMore=true`를 유지한다.
+- RED에서 batch limit 1, 첫 페이지 부적격, 다음 페이지 eligible일 때 첫 응답이 `attempted=0, hasMore=true`로 재현됐다. GREEN은 같은 invocation에서 뒤 후보를 exact path로 한 번 삭제하고 재호출 시 claim/delete/enqueue가 중복되지 않음을 검증한다. 영구 cursor mock도 listing 10회에서 정확히 정지한다.
+- 최신 로컬 검증: maintenance 2 files/29 tests, API 전체 17 files/333 tests, API build/typecheck exit 0, 두 변경 파일 LSP/Serena diagnostics 0, diff-check exit 0.
+- `agent-lsp_blast_radius`는 두 편집 대상 모두 broker 10초 기동 실패로 사용할 수 없었다. Serena reference 분석과 독립 diagnostics를 fallback으로 사용했다.
+- 로컬 검증 뒤 staging을 read-only로 확인했으나 100% traffic revision은 이번 수정 이전 생성본이었다. deployment 금지 범위 때문에 구 revision에 fixture를 만들지 않았고 Firestore/GCS mutation이나 잔여 fixture는 없다. 수정 포함 revision이 승인 배포되기 전에는 live exact-cleanup/re-invocation/absence gate를 충족할 수 없으므로 T5는 미완료다.
+- 토큰, URL, service-account email, project number, correlation, object path, revision 식별자는 기록하지 않았다.
+
+## 2026-07-17 API OCR 후보 계약 판정
+
+- **실제 결함 — worker OIDC audience fallback drift:** Cloud Tasks 송신 측 `getWorkerAudience()`는 `INTERNAL_WORKER_AUDIENCE -> INTERNAL_WORKER_URL -> INTERNAL_API_URL -> localhost:${PORT}` 순서로 worker URL을 만들지만 검증 측 `getExpectedAudience()`는 `INTERNAL_API_URL`을 건너뛰고 module-load 당시 port만 사용했다. RED에서 `INTERNAL_API_URL` 및 runtime `PORT` 두 경우가 각각 sender/verifier mismatch로 실패했다. 검증 측이 기존 `createInternalWorkerUrl()`을 재사용하도록 최소 수정했고 명시 audience 우선순위와 issuer/email fail-closed 검사는 유지했다.
+- **실제 결함 — invalid upload cleanup이 공개 validation 오류를 덮음:** HWP signature 불일치 후 `fs.rm`이 실패하면 원래 422 `invalid_file_signature` 대신 cleanup 예외가 전역 500으로 공개됐다. RED에서 해당 1건만 500으로 재현했다. cleanup을 best-effort helper로 격리하고 경로/raw 오류 없는 고정 event만 기록해 원래 validation/I/O 오류를 보존했다. T1/T2 공개 오류 sanitization은 유지된다.
+- **의도된 동작 — worker URL 자체 fallback:** `INTERNAL_WORKER_URL`이 비어 있을 때 `INTERNAL_API_URL` 또는 localhost worker route로 fallback하는 것은 현재 public monolith 호환 계약이다. private converter readiness 증거는 아니며 이번 범위에서 startup 요구사항으로 강화하지 않았다.
+- **의도된 동작 — `resetStuckJob(jobId)` compatibility wrapper:** public signature는 유지된다. transaction-safe `recoverStuckJobs(cutoff, 100)` batch 결과에 requested ID가 포함될 때만 `true`를 반환하는 현재 설계가 맞으며 단일-ID 직접 mutation으로 바꾸지 않았다. recovery 표적 suite 18/18 통과로 T4 경계를 재확인했다.
+- **false positive — maintenance OIDC/recovery 공개 경계:** 설정 누락, audience/issuer/numeric subject 불일치는 fail-closed이고 maintenance 결과/로그는 aggregate만 노출한다. route 27/27 및 recovery 18/18 통과로 코드 수정 근거가 없었다.
+- **범위 밖 — private converter/Scheduler/IAM/staging readiness:** 별도 converter의 명시 URL/audience/email, IAM 및 live dispatch 증거는 T5/T10/T11 승인·배포 게이트다. 인프라/GCP mutation이나 plan checkbox 변경을 수행하지 않았다.
+- TDD 증거: audience RED 23개 중 2개 실패 -> GREEN 23/23, upload RED 25개 중 1개 실패(예상 422, 실제 500) -> GREEN 25/25. 전체 API tests는 17 files / 331/331 통과했고 변경 파일 diagnostics는 0건이었다.
+- `pnpm --filter api typecheck`는 사용자 선행 변경인 `apps/api/tsconfig.json`의 CommonJS/ES2020 설정 때문에 default import, top-level await, 기존 Firestore 타입 등 광범위한 기존 오류로 실패했다. 파일을 복구하거나 범위 밖 오류를 수정하지 않았다. 원래 strict NodeNext/ES2022 옵션을 명령줄로 적용한 `tsc --noEmit`은 exit 0이었다.
+- agent-lsp daemon은 두 차례 모두 10초 내 시작되지 않아 blast-radius/explore_symbol이 초기화되지 않았다. 요구된 영향 분석은 LSP references와 제한 Read/Grep으로 대체했으며 ast-grep 전용 skill도 triage에 없어 동일 fallback을 사용했다.
+
+## 2026-07-17 read-only external-gate independent audit
+
+- 감사 범위는 plan의 T5, T6, T7, T10, T11, T12, F1-F4와 최신 learnings/issues 및 존재하는 task/final evidence의 대조로 제한했다. GCP/Firebase mutation, staging fixture 조작, plan checkbox 변경, 코드·설정·ADR·evidence 수정은 수행하지 않았다.
+- 최신 plan/notepad 관찰을 오래된 evidence 문구보다 우선했다. 특히 T6 evidence의 과거 `완료` 결론과 final evidence의 오래된 선행 task 목록은 최신 plan/notepad와 불일치하므로 현재 상태 근거로 사용하지 않았다. `issues.md`는 비어 있고 T11 전용 evidence는 존재하지 않는다.
+
+| ID | 판정 | 코드/로컬 상태 | 정확한 미충족 acceptance 또는 외부 게이트 |
+|---|---|---|---|
+| T5 | **BLOCKED 유지** | repository endpoint, OIDC 거부 matrix 및 로컬 idempotency 검증은 완료되어 코드 실패 증거가 없다. | Scheduler HTTP 200과 recovery→enqueue 1건은 관찰됐지만 API가 public invoker/ingress를 유지하고 Scheduler identity의 최소 service-level invoker 경계가 증명되지 않았다. queue는 `PAUSED`, 남은 task는 dispatch/response 0이어서 실제 worker 완료가 없고, expired-session GCS cleanup/delete 및 재호출 무중복의 staging 증거도 없다. |
+| T6 | **BLOCKED 유지** | index 선언, Memory/Firestore query-chain 테스트와 build는 통과해 코드 실패가 아니다. | 정확한 `boardPosts` composite index는 `READY`이고 8개 ordered/paginated query가 실행됐지만 네 경로 모두 문서 0개다. 따라서 실제 문서 최신순, offset 페이지 경계, 페이지 간 무중복·무누락 및 Memory store와의 결과 일치를 관찰하지 못했다. READY/query 실행과 document-based pagination acceptance를 구분해야 한다. |
+| T7 | **BLOCKED 유지** | 모바일 nav 키보드·포커스와 동적 progressbar/live-region 로컬 회귀, lint/typecheck는 통과해 코드 실패가 아니다. | 375x812 브라우저에서 `AuthProvider`의 `onAuthStateChanged`가 실행되지 않아 `auth-nav-loading`이 고착되고 로그인 제출 후 인증 관련 네트워크 요청도 발생하지 않았다. 제품 코드나 영구 Firebase/Auth 설정을 바꾸지 않는 별도 승인된 안전한 인증 QA 경로로 인증 사용자 링크·키보드 동작을 실브라우저에서 관찰해야 한다. |
+| T10 | **BLOCKED 유지** | proposed ADR의 threat model, 목표 IAM/network/egress/rollout 계약과 독립 재검토 Critical/High 0은 통과했다. 코드 실패 판정이 아니다. | ADR/evidence의 operator approval 서명·날짜 및 승인 대화 기록이 비어 있다. 최신 baseline과 문서의 일부 과거 queue/env 서술도 불일치한다. dedicated identities와 dual `actAs`, private converter ingress/invoker, expected-email fail-closed, public-internet deny와 Google API allow, converter-only 404, readiness, HWP E2E 및 rollback의 live evidence가 없다. ADR은 계속 `proposed`다. |
+| T11 | **BLOCKED 유지** | T10 설계 검토 통과만으로 구현·전환 acceptance를 충족하지 않으며 T11 전용 evidence도 없다. | T10 operator approval과 current→target topology 증거에 선행 의존한다. 별도 converter/identity/IAM 배포, OIDC negative, 실제 HWP→PDF, duplicate/retry, timeout/corrupt/crash 안전 종료 및 기존 worker rollback 실증이 없다. 승인 전 provisioning·IAM·traffic 변경은 금지된다. |
+| T12 | **BLOCKED 유지** | 코드 실패 판정이 아니라 통합 검증의 선행조건 미충족이다. | T5-T7과 T10-T11이 미완료라 최신 전체 검증, 로컬/브라우저/staging QA, 운영 상태와 문서 일치, 계획 범위 diff 및 최종 evidence의 acceptance를 평가할 수 없다. |
+| F1 | **BLOCKED 유지** | 평가 불가(제품 결함 판정 아님). | T1-T12 완료 후에만 실행하는 final wave인데 T5-T7, T10-T12가 미완료다. 현재 worktree에는 다수의 선행 변경이 있으나 `git diff --check`는 exit 0이었다. 이 위생 확인만으로 plan compliance를 통과시킬 수 없다. |
+| F2 | **BLOCKED 유지** | 평가 불가(제품 결함 판정 아님). | 선행 tasks 완료 전에는 최신 전체 변경 파일 diagnostics/OCR, 비밀·내부정보 노출 검색, transaction 및 실제 converter 최소 IAM을 최종 범위로 평가할 수 없다. |
+| F3 | **BLOCKED 유지** | 평가 불가(제품 결함 판정 아님). | T5 maintenance dispatch/cleanup, T6 실제 문서 pagination, T7 인증 모바일 브라우저, T11 converter 정상·오류·중복 행동을 동일한 최신 local/staging wave에서 수행·관찰할 수 없다. |
+| F4 | **BLOCKED 유지** | 평가 불가(제품 결함 판정 아님). | 승인된 private converter target 환경이 없어 API/converter 분리 IAM·ingress·queue target, live rollback 및 저장소 문서와 staging topology 일치를 평가할 대상이 없다. |
+
+- 별도 사용자 승인이 필요한 행동은 (1) T5의 Scheduler 전용 최소 IAM/public invocation 경계 정비와 queue dispatch·cleanup fixture 실증, (2) T6의 비식별 staging 문서 fixture를 통한 실제 정렬·pagination 관찰, (3) T7의 제품 코드·영구 Firebase/Auth 설정을 변경하지 않는 안전한 인증 브라우저 QA 경로, (4) T10 ADR/resource diff에 대한 명시적 operator 승인, (5) 승인 후 T11 private converter/identity/IAM/egress 배포와 live HWP·negative·rollback 검증이다.
+- 감사 중 credential, token, exact URL, service-account email, project number, bucket/object 또는 내부 task/index identifier를 기록하지 않았다.
+
+## 2026-07-17 13:08:33 +09:00 API OCR 공개 오류 계약 독립 감사
+
+- **APPROVE:** 기존 빌드 산출물에서 `await createApp()`으로 실제 Express HTTP를 관찰한 결과 `/health`는 200, 파일 없는 `/v1/upload`는 422 `file_required`, 잘못된 HWP 서명 업로드는 422 `invalid_file_signature`였고 현재 소스 계약과 일치했다.
+- `file_required`는 `apps/api/src/routes/v1.ts`에서 422와 고정 한국어 안내문으로 생성되고, `invalid_file_signature`는 `apps/api/src/middleware/upload.ts`에서 422와 고정 한국어 안내문으로 생성된다. 전역 `errorHandler`는 `ApiError`의 상태와 안전한 body만 직렬화하므로 관찰 응답에 내부 경로나 raw 예외가 없었다.
+- invalid-signature cleanup은 `removeRejectedUpload()`이 삭제 실패를 자체 흡수하고 고정 이벤트명만 기록한 뒤 원래 422를 전달한다. cleanup 실패 회귀 테스트 1/1이 정확한 코드·한국어 메시지 보존을 통과해 validation 422가 500으로 덮일 호출 흐름은 현재 없다.
+- worker audience의 발급 측과 검증 측은 explicit audience를 우선한 뒤 동일한 worker URL resolver를 공유한다. `INTERNAL_WORKER_AUDIENCE` → `INTERNAL_WORKER_URL` → `INTERNAL_API_URL` → runtime `PORT` 동치는 표적 audience 테스트 4/4, URL resolver 테스트 4/4로 확인했다.
+- 추가 표적 검증은 health 1/1, cleanup 실패 1/1이 통과했다. 관련 파일 단위 실행도 converter 2/2, upload ownership 25/25가 통과했으며, 요청대로 전체 API 331개 테스트는 재실행하지 않았다. `worker-auth.ts`, `upload.ts`, `cloud-tasks-dispatcher.ts` LSP diagnostics는 각각 0건이었다.
+- 차단점 없음. CodeGraph는 연결된 도구 목록에 없어 Serena symbol overview/find_symbol, 제한 Read/search, LSP diagnostics로 즉시 대체했다. 제품 코드·테스트·계획·GCP/IAM/배포는 변경하지 않았고 민감한 값은 출력하거나 기록하지 않았다.
+
+## 2026-07-17 13:19:16 +09:00 T5 read-only staging preflight
+
+- 운영 경계는 staging의 `Cloud Scheduler -> public API maintenance endpoint -> Cloud Tasks queue -> monolith worker`로 제한했다. 저장소 구성에서 staging 프로젝트, `asia-northeast3`, API 서비스, 변환 큐를 확정한 뒤 이름과 민감값을 출력하지 않는 PowerShell 7 래퍼로 `gcloud` read-only `describe/list`만 실행했다. 리소스 생성·수정·실행·enqueue·pause/resume·삭제는 하지 않았다.
+- 명령 증거: `scheduler jobs list` exit 0, `scheduler jobs describe` exit 0(두 차례 교차 확인 포함), `run services list` exit 0, `run services describe` exit 0(교차 확인 포함), `tasks queues list` exit 0, `tasks queues describe` exit 0, `tasks list` exit 0. 권한 거부·API 비활성·not-found 오류는 관찰되지 않았다.
+- fresh 정상 경로 관찰: Scheduler job 1개는 `ENABLED`, `POST`, maintenance path이고 OIDC service-account 설정과 최근 attempt가 존재한다. API 서비스는 `Ready`, maintenance audience 설정 존재, subject는 digits-only, issuer는 명시값 또는 기본 Google issuer 계약이다. 그러나 Scheduler OIDC audience는 endpoint target과도 API `MAINTENANCE_OIDC_AUDIENCE`와도 일치하지 않아 현재 구성으로 exact-audience acceptance를 충족하지 않는다. 마지막 Scheduler 상태에는 오류 code가 없었지만, 리소스 상태만으로 endpoint 실행 또는 maintenance 성공을 증명하지 않는다.
+- fresh 공개 경계 관찰: API ingress는 `all`이고 invoker IAM check 비활성화 annotation은 없다. 이번 허용 명령에는 IAM policy 조회가 포함되지 않아 `allUsers` binding 및 Scheduler identity의 service-level invoker 보유 여부는 fresh 확인 불가다. 기존 10:03 관찰의 public invoker 및 Scheduler 전용 invoker 부재는 과거 증거로만 유지하며, 현재 최소 IAM acceptance는 미증명이다.
+- fresh queue/worker 관찰: queue 1개는 현재 `RUNNING`, max concurrent 1, dispatch rate 0.1/s, max attempts 3이고 pending task는 0개다. 이전 `PAUSED`/dispatch 0 task 관찰에서 상태는 바뀌었지만, `tasks list`는 대기 task만 보여 completed task 이력을 제공하지 않으므로 실제 worker 2xx 완료 1건은 관찰하지 못했다. queue 존재·RUNNING·empty는 worker completion 증거가 아니다.
+- cleanup/idempotency: 허용된 Scheduler/Run/Tasks `describe/list`는 GCS delete audit, expired-session exact-path cleanup, 같은 fixture 재호출의 무중복 enqueue/delete를 보여주지 않는다. 기존 staging 기록에도 실제 cleanup/delete 및 재호출 무중복 증거가 없으므로 이 acceptance는 계속 미충족이다.
+- 정확한 외부 게이트: (1) Scheduler audience를 API endpoint-specific audience와 일치시키는 승인된 구성 변경 및 valid/wrong-audience live 검증, (2) public API 요구를 보존하면서 Scheduler 호출의 최소 service-level IAM 경계를 fresh policy 증거로 확인, (3) 승인된 staging 장애 fixture로 recovery -> enqueue -> worker 성공 완료를 correlation, (4) expired-session exact object cleanup과 같은 fixture 재호출 무중복을 로그/audit로 입증해야 한다.
+- **판정: T5 remains BLOCKED.** 저장소 코드와 Supertest 증거, Scheduler/queue 존재는 확인되지만 audience 불일치가 직접 관찰됐고 최소 IAM, 실제 worker 완료, cleanup/idempotency live acceptance가 충족되지 않았다. token, URL/audience 원문, service-account email, project number, bucket/object path, task/resource ID는 출력하거나 기록하지 않았다.
+
+## 2026-07-17 13:16:19 +09:00 T6 read-only staging preflight
+
+- 저장소의 `boardPosts` COLLECTION 복합 인덱스 선언은 `category ASCENDING, createdAt DESCENDING`이며, 실제 `FirestoreBoardStore.listPosts`의 category equality + `createdAt DESC` 쿼리와 일치한다. category 없는 경로는 `createdAt DESC` 단일 정렬이다.
+- 읽기 전용 raw composite-index 목록을 식별값 없이 파싱한 결과, 선언 필드 뒤 Firestore 자동 tie-breaker인 `__name__ DESCENDING`을 포함한 정확한 shape가 1개였고 상태는 `READY`였다.
+- 문서 필드를 `category`와 `createdAt`으로만 제한해 unfiltered/general/qna/notice 각각 offset 0/2, limit 2를 읽기 전용 실행했다. 8/8 쿼리가 오류 없이 응답했지만 모든 경로의 첫째·둘째 페이지가 0건이었다.
+- 따라서 index readiness와 ordered query 실행 가능성은 확인했으나, 비식별 기존 staging 문서로 실제 최신순, 다중 페이지 경계, 페이지 간 무중복·무누락 또는 Memory store와의 결과 일치를 관찰할 수 없었다. 빈 응답은 document-based pagination acceptance가 아니다.
+- **판정: T6 remains BLOCKED.** 데이터 mutation 승인이 없으므로 fixture를 생성·수정·삭제하지 않았다. 향후 승인된 비식별 staging 문서가 각 검증 경로에 최소 3건 이상 존재할 때 두 페이지의 정렬·경계·무중복·무누락을 다시 관찰해야 한다.
+- Firestore 문서·인덱스·규칙·IAM·배포에는 변경을 수행하지 않았고, 문서 내용/ID, 프로젝트·인덱스 식별자, project number, credential/token, URL/object path를 기록하지 않았다. 이번 작업의 유일한 파일 변경은 이 notepad append다.
+
+## 2026-07-17 13:18:11 +09:00 T10 private converter read-only current-to-target staging preflight
+
+- 점검 경계는 현재 Public API → Cloud Tasks → 현행 worker와 목표 Public API → Cloud Tasks → private converter → GCS/Firestore 경로다. 계획 T10, `proposed` ADR, API Cloud Run 운영 문서, 현재 배포 workflow, T10 evidence를 먼저 대조해 프로젝트 설정, 리전, API/목표 converter/queue 및 API 환경변수가 참조하는 bucket을 도출한 뒤 조회했다.
+- 읽기 전용 명령은 API와 목표 converter의 `gcloud run services describe`, queue `gcloud tasks queues describe`, 프로젝트 IAM policy와 현재 OIDC subject SA policy 조회, bucket describe/IAM policy 조회를 모두 시도했다. task 목록도 읽기 전용으로 조회했다. 출력은 이름·이메일·URL·프로젝트 번호·bucket 값 대신 존재 여부, 동일성, boolean만 남겼다.
+- **현재 Cloud Run/queue 기준선:** API 서비스는 존재하고 ingress `all`이며 unauthenticated invocation이 허용돼 있다. 목표 converter 서비스는 존재하지 않는다. queue는 존재하고 이번 조회 시점에는 `RUNNING`이며 rate/retry 설정이 있으나 관찰된 task는 0개였다. API worker URL과 audience는 구성돼 있고 서로 같지만 converter를 가리키지 않는다. 따라서 현재는 public API와 worker/converter runtime이 같은 서비스 경계인 monolith이며 private ingress/IAM 요구를 충족할 수 없다.
+- **현재 identity/IAM 기준선:** API runtime identity와 OIDC token subject가 구성돼 있지만 서로 동일하다. 이 현재 subject에 대해 API runtime actor와 Cloud Tasks primary service agent 양쪽의 `actAs` 연결은 관찰됐고 API runtime에는 queue enqueuer가 있으며 project owner/editor는 관찰되지 않았다. 그러나 목표 전용 `api-dispatcher-sa`와 `api-converter-sa`는 존재하지 않으므로, 이 결과는 목표 subject에 대한 dual `actAs`, 세 identity 분리, converter service-level invoker 또는 converter runtime 최소 권한의 증거가 아니다.
+- **현재 storage 기준선:** API가 참조하는 bucket은 읽을 수 있고 public principal IAM binding은 관찰되지 않았다. UBLA는 비활성이고 PAP는 강제되지 않았다. 이는 public exposure 확정은 아니지만 ADR 목표인 UBLA/PAP hardening 및 signed-upload 호환 검증이 아직 남았음을 뜻한다.
+- **current → target 차이:** 현재는 public API 한 개가 public route와 LibreOffice worker route를 같은 image/network/runtime identity로 제공하고 Cloud Tasks OIDC subject도 API runtime과 같다. 목표는 public API task creator, 전용 OIDC subject, 전용 converter runtime의 세 identity와 별도 internal-only/no-public-invoker converter, converter-only route, all-traffic VPC/Direct VPC egress 및 public-internet deny/Google API allow를 요구한다. 현재 topology만으로는 이 보안 경계를 만족시킬 수 없다.
+- **미충족 gate — dual `actAs`:** 목표 `api-dispatcher-sa`에 API runtime caller와 Cloud Tasks primary service agent가 각각 제한된 `iam.serviceAccounts.actAs`를 보유한다는 resource-level policy 증거와, 그 subject를 지정한 실제 staging `createTask` 성공 증거가 필요하다. 현재 monolith subject의 두 binding은 대체 증거가 아니다.
+- **미충족 gate — expected-email fail-closed:** API와 별도 converter 모두에 expected full email이 존재하고 정확히 같으며, expected email 요청 수락, 다른 email 거부, 값 누락/불일치 시 startup/readiness 또는 deployment preflight hard failure가 관찰돼야 한다. 현재 converter가 없어 어떤 positive/negative/missing-value 결과도 없다.
+- **미충족 gate — private invoker/ingress:** converter의 internal 또는 internal-and-load-balancing ingress, `allUsers` invoker 부재, 전용 OIDC subject의 converter service-resource `roles/run.invoker`, 외부 직접 접근 403/연결 거부 증거가 필요하다. converter 부재로 모두 미검증이다.
+- **미충족 gate — egress 결정:** converter all-traffic VPC/Direct VPC attachment, no general-purpose public NAT, firewall public-destination deny와 GCS/Firestore/Google token endpoint allow의 positive/negative pair가 필요하다. `PRIVATE_RANGES_ONLY`만으로는 통과할 수 없으며 현재 관찰 대상 converter가 없다.
+- **미충족 gate — converter-only route/readiness:** 별도 converter에서 `/v1/upload`, `/v1/jobs/{jobId}`, `/v1/results/{fileName}`가 404이고 internal worker만 허용되며 `/ready`가 LibreOffice warm-up 및 필수 dependency 상태를 반영한다는 증거가 필요하다. 현재 public monolith route는 이 gate를 충족하지 않는다.
+- **미충족 gate — HWP E2E:** 승인된 staging에서 pinned converter revision을 통해 upload → queue → converter → GCS/Firestore → PDF 완료/다운로드가 성공하고 PDF signature, duplicate/retry, corrupt/timeout/crash 안전 종료까지 관찰돼야 한다. 이번 preflight는 invoke/enqueue/conversion 금지 범위여서 실행하지 않았고 기존 live evidence도 없다.
+- **미충족 gate — rollback:** converter previous revision target-only rollback과 Public API `CONVERSION_DISPATCHER=inline` 전환이 실제 HWP 처리를 복구하며, 재분리 전환도 가능하다는 staging 증거가 필요하다. 문서 절차만 있고 실행 증거는 없다.
+- **승인 gate:** ADR Section 10.2와 T10 evidence의 operator signature/date 및 승인 대화 기록은 비어 있다. 이번 read-only 점검은 사용자 승인이나 provisioning 승인을 대체하지 않는다.
+- **T10 판정: BLOCKED (`[~]` 유지).** corrected ADR의 목표 threat model/IAM/network/rollout 계약과 독립 재검토 Critical/High 0은 유효하지만, live target topology·수용 증거와 명시적 operator approval이 없다. 또한 fresh 기준선은 queue와 worker URL/audience가 존재하므로 과거 evidence의 queue 미확정/empty env 문구는 최신 current-state 근거로 사용할 수 없다.
+- **T11 판정: NOT AUTHORIZED / BLOCKED.** T10 승인과 위 live gate가 충족되지 않아 converter provisioning, IAM 변경, 배포, enqueue, traffic 전환 또는 완료 선언을 시작할 수 없다. rollback은 현재 monolith를 변경하지 않는 것이며, 이번 실행에서도 Cloud Run/Tasks/IAM/storage/traffic/data mutation은 0건이다.
+- 민감정보 보호: exact service-account email, URL/audience, project number, bucket 이름, task/resource ID, token/credential 및 object path는 출력·기록하지 않았다. 이번 작업의 유일한 파일 변경은 이 notepad append다.
+
+## 2026-07-17 13:35:26 +09:00 T5 OIDC maintenance staging 독립 감사
+
+- 감사 범위는 staging의 Cloud Scheduler OIDC 설정, maintenance Cloud Run service-resource IAM, 무토큰 POST, Cloud Tasks queue와 최근 7일 Cloud Logging으로 제한했다. Scheduler 강제 실행, task enqueue, queue pause/resume, fixture·GCS·Firestore·IAM·Cloud Run 변경은 수행하지 않았다.
+- **PASS — audience:** Scheduler OIDC audience와 maintenance 서비스의 `MAINTENANCE_OIDC_AUDIENCE`는 정확히 같다. Scheduler target은 `/internal/maintenance/run`이고 POST/ENABLED이며 서비스는 Ready다. audience는 전체 endpoint URL 자체와는 다르지만, 애플리케이션이 검증하는 명시적 audience 환경값과의 exact-match gate는 충족한다.
+- **PASS — resource-level IAM:** Scheduler OIDC service account principal은 maintenance Cloud Run 서비스 리소스의 `roles/run.invoker`에 포함돼 있다. 이전 audience/IAM 불일치 차단 사유는 현재 구성에서는 해소됐다.
+- **PASS — public invoker 부재:** maintenance 서비스의 invoker binding에 `allUsers`와 `allAuthenticatedUsers`가 모두 없다. 이 IAM 관찰은 HTTP 동작과 별도 gate로 판정했다.
+- **PASS — 무토큰 거부:** 토큰 없이 maintenance endpoint에 POST한 읽기 전용 negative probe는 HTTP 403이었다. public principal 부재와 실제 무토큰 거부가 각각 확인됐다.
+- **PASS — Scheduler→maintenance 현재 실행:** 최근 Scheduler user-agent maintenance 요청 중 최신 연속 10건은 모두 HTTP 200이다. 7일 범위 전체에는 58건의 2xx와 21건의 과거 4xx가 있어 과거 실패를 숨기지 않으며, 최신 관찰과 과거 이력을 구분한다.
+- **PASS — queue 준비 상태:** `conversion-queue`는 현재 `RUNNING`이고 조회 시 pending task는 0건이다. queue 존재·RUNNING·empty만으로 worker 완료를 주장하지 않는다.
+- **BLOCKED — recovery→enqueue→worker 완료:** maintenance aggregate에서 `recovered > 0`인 실행 2건과 Cloud Tasks user-agent worker 요청 2건의 HTTP 200이 관찰됐고, 그중 한 시각은 일치한다. 그러나 maintenance의 `recovered`는 enqueue 성공과 객체 삭제 성공을 합산하고 job/task 식별 상관관계를 노출하지 않으며, worker route의 200은 completed뿐 아니라 no-op 또는 terminal failure도 포함할 수 있다. 따라서 동일 recovered job의 enqueue와 실제 `completed` 전이를 끝까지 증명하지 못했다. CreateTask 감사 로그 및 별도 worker-completion 이벤트도 이번 조회에서는 0건이었다.
+- **BLOCKED — expired-upload cleanup:** 최근 7일 객체 삭제 감사 로그는 0건이고 maintenance 공개 aggregate에는 enqueue와 delete를 구분하는 필드가 없다. exact object cleanup 성공을 증명할 수 없다.
+- **BLOCKED — idempotency:** 동일한 recovery 또는 expired-upload fixture를 재호출했을 때 enqueue/delete가 중복되지 않았다는 staging 상관 증거가 없다. 로컬 transaction/idempotency 테스트는 이 live gate를 대체하지 않는다.
+- **최종 판정: T5 BLOCKED.** 이전 핵심 차단이던 audience/IAM 불일치, public invoker, 무토큰 거부와 Scheduler 실제 2xx는 해소·통과했다. 남은 acceptance는 (1) 비식별 상관키로 recovery→CreateTask→worker `completed`를 연결한 증거, (2) expired-upload exact cleanup 성공, (3) 같은 fixture 재처리의 enqueue/delete 무중복 증거다.
+- token, exact URL/audience 원문, service-account email, immutable subject, project number, bucket/object path, task/job/resource identifier는 출력하거나 기록하지 않았다. 이번 감사의 유일한 파일 변경은 이 notepad append이며 plan checkbox, 코드, config, evidence 및 문서는 변경하지 않았다.
+
+## 2026-07-18 11:15:00 +09:00 T10 current baseline wording repair retry executed
+
+- REJECT된 이유: 이전 보고가 `git diff --check` 통과와 파일 수정 사실만 확인했으나, ADR/evidence 문구가 최신 read-only baseline(learnings 536-549)과 여전히 불일치했음. 특히 worker URL/audience를 "empty/blank"로 잘못 서술하고 queue를 "may exist"로 표현하며 "no infrastructure changes have been executed"를 현재 존재하는 public API/queue/Scheduler와 혼동하게 썼음.
+- 수정한 사실:
+  - `docs/architecture/adr/0001-private-converter-service-separation.md` §1.1: `INTERNAL_WORKER_URL`과 `INTERNAL_WORKER_AUDIENCE`가 "configured and equal"이나 public `hwp2pdf-api`를 가리킨다고 수정. queue는 존재하고 `RUNNING`임을 명시, 단 queue 존재가 private converter 준비 상태는 아님을 유지.
+  - `.omo/evidence/task-10-code-frontend-improvement-final.md` §1B, §1D: 동일하게 "configured/equal" + "point to public monolith"로 수정. queue가 `RUNNING`임을 명시. 중복 사유 문구 제거.
+  - `.omo/evidence/task-10-code-frontend-improvement-final.md` §3: "no infrastructure changes have been executed"를 "no target private-converter provisioning or change has been executed"로 교정, 기존 public API/queue/Scheduler는 이미 존재함을 명시.
+  - `.omo/evidence/task-10-code-frontend-improvement-final.md` Current→Target diff table: header/separator 추가, current-state 열을 baseline(2026-07-17) 정합하게 갱신(queue RUNNING, worker URL/audience public monolith 등).
+- 그대로 유지한 것: ADR `Status: proposed`, operator signature/date 비어 있음, T10/T11 `[~]` blocked, target resource list와 rollout contract, all external gates, 모든 제품 코드/설정/workflow/infra/deploy/IAM unchanged.
+- 검증: 대상 문서 재독 후 `git diff --check` exit 0. `agent-lsp_blast_radius`와 ast-grep은 Markdown-only 수정이므로 적용하지 않음.
+- 판정: T10 remains `[~]` / BLOCKED. 이번 수정은 문서 기준선 정확성 복구일 뿐 operator approval이나 live target staging evidence를 대체하지 않는다.
+
+## 2026-07-18 11:25:00 +09:00 T10 evidence-source separation correction
+
+- REJECT/교차검증 지적: ADR/evidence가 checked-in workflow(`deploy-api-cloud-run.yml` 130-135: `INTERNAL_WORKER_URL=""`, `INTERNAL_WORKER_AUDIENCE`는 secret fallback으로 빈 값 가능)와 deployed staging runtime 관찰(2026-07-17, learnings 536: non-empty/equal, public monolith 가리킴)을 혼합해 "workflow가 configured/equal URL/audience를 설정"하는 듯 잘못 서술했음.
+- 수정:
+  - ADR §1.1: workflow는 URL empty, audience secret-with-empty-fallback임을 명시. runtime non-empty/equal 값은 별도 read-only staging 관찰이며, 그 값은 public `hwp2pdf-api`를 가리킨다고 분리 기술.
+  - evidence §1B/§1D: 동일 분리. checked-in workflow 행위와 deployed runtime observation을 별도 bullet로 구분.
+  - evidence §3 current→target table: current-state 열에 workflow 기본값과 runtime 관찰을 함께 기술, target 리소스는 proposed로 유지.
+- 민감정보: 실제 URL/audience, secret 이름, service-account email, project number, bucket/object path는 기록하지 않음.
+- 차단 유지: T10/T11 `[~]`, operator approval 비어 있음, target private converter live evidence 없음. 이번 수정은 문서 정확성 복구만.
+
+## 2026-07-18 11:33:00 +09:00 T10 ADR causal inference removal
+
+- FAILED verification 지적: ADR §1.1에 workflow empty default와 runtime non-empty/equal 값의 차이가 "externally supplied secrets/configuration outside the checked-in workflow"로 설명하는 unsupported causal inference가 있었음. read-only review는 차이를 관찰할 뿐 원인을 입증하지 않는다.
+- 수정: ADR §1.1 문장을 "The source of the runtime/workflow difference was not determined by this read-only review; both records are retained as separate evidence layers."로 교체.
+- 그대로 유지: workflow URL empty, audience secret fallback empty 가능, runtime observation non-empty/equal, public monolith 가리킴, queue RUNNING, converter/목표 identity 부재, ADR `Status: proposed`, operator approval blank, T10/T11 blocked.
+- 적용 범위: `docs/architecture/adr/0001-private-converter-service-separation.md`와 `.omo/notepads/.../learnings.md` append만. evidence 파일은 동일한 unsupported causal claim이 없어 수정하지 않음.
+- 검증: `rg`로 "explained by externally supplied" 잔여 확인, `git diff --check` exit 0.
+
+
+## 2026-07-17 14:35:42 +09:00 T10 workflow audience summary correction
+
+- REJECT 사유: ADR Evidence & Review Notes가 checked-in workflow의 worker URL과 audience를 함께 `empty`로 축약해, URL만 명시적으로 빈 값이고 audience는 secret에서 가져오되 빈 fallback을 갖는 원본 선언보다 강하게 단정했음.
+- 정정: workflow 근거 요약을 empty worker URL과 secret에서 가져오며 empty fallback을 갖는 audience로 구분했다. deployed runtime의 별도 read-only 관찰 및 runtime/workflow 차이의 미확인 원인은 변경하지 않았다.
+- 차단 유지: ADR `Status: proposed`, operator approval blank, target private converter/identity 부재를 유지하며 T10/T11은 `[~]` / blocked 상태다.
+- 검증: 대상 ADR에서 workflow audience를 definitive `empty`로 표현한 잔여 문구가 없음을 확인했고, 지정된 두 파일에 대한 `git diff --check` 결과는 exit 0이었다.
+
+## 2026-07-17 14:46:11 +09:00 T10 independent ADR re-review
+
+- **VERDICT: APPROVE**, **Critical/High: 0/0**. 이 APPROVE는 corrected ADR의 문서 정확성과 설계 계약에 대한 보조 게이트 통과일 뿐, T10 구현·배포 완료 또는 T11 승인을 의미하지 않는다.
+- Checked-in workflow 근거: `.github/workflows/deploy-api-cloud-run.yml` 134-135행에서 `INTERNAL_WORKER_URL`은 명시적으로 empty string이고, `INTERNAL_WORKER_AUDIENCE`는 `secrets.CLOUD_RUN_WORKER_AUDIENCE`에서 가져오되 `|| ''`로 빈 fallback을 가진다. URL과 audience를 둘 다 definitive `empty`로 합치면 안 된다.
+- Audience sourcing: audience는 secret sourced with empty fallback이며, 현재 secret 값이 실제로 empty인지 non-empty인지는 checked-in workflow만으로는 확정하지 않는다.
+- Deployed runtime observation: 2026-07-17 read-only staging 관찰에서 `INTERNAL_WORKER_URL`과 `INTERNAL_WORKER_AUDIENCE`는 non-empty/equal이며 public `hwp2pdf-api`를 가리킨다. 이는 checked-in workflow와 별도의 evidence layer다.
+- Evidence layer separation: checked-in workflow 기본값과 deployed runtime 관찰은 별도 레코드로 유지되며, 둘 사이의 차이 원인은 read-only review로 결정되지 않았다. 이 두 레코드를 causal inference 없이 분리해 기록한다.
+- Remaining T10/T11 blockers: ADR Status는 여전히 `proposed`이고, ADR Section 10.2 operator approval 서명/날짜가 비어 있으며, target private converter service와 dedicated identities, live fail-closed staging evidence가 부재하므로 T10은 `[~]`로 유지하고 T11은 NOT AUTHORIZED 상태다.
+- 민감정보 보호: 비밀 URL, audience 값, secret 이름, service-account email, project number, bucket/object path, token, task/job identifier는 기록하지 않았다.
+- 이번 작업의 유일한 파일 변경은 이 notepad append이며, plan checkbox, ADR/evidence 본문, source/config/workflow/infra/IAM/deploy는 변경하지 않았다.
+
+## 2026-07-17 17:17:56 +09:00 T10 operator record and target staging read-only preflight
+
+- 사용자 문구 `진행해 전부`는 요청된 T10 staging-only read-only preflight와 evidence 기록 승인으로 한정했다. T11 구현, Cloud Run 배포, 전용 SA 생성, IAM 쓰기, queue retarget/enqueue, traffic 전환, production 변경, commit/push 승인이 아니다. ADR status는 계속 `proposed`다.
+- evidence layer를 분리했다. checked-in workflow는 public API 단일 배포, explicit empty worker URL, secret-sourced audience with empty fallback이다. fresh deployed runtime은 worker URL/audience가 non-empty/equal이며 public API monolith를 가리킨다. 차이의 원인은 read-only 관찰로 추론하지 않았다.
+- fresh read-only gcloud 결과: 리전 내 Cloud Run service는 2개지만 target `hwp2pdf-converter`는 없고, public API는 Ready/ingress all/public invoker다. queue는 RUNNING, max concurrency 1, bounded retry 3, pending 0이다. 두 번째 비목표 서비스나 queue 상태를 converter target 증거로 오인하지 않았다.
+- 현재 API runtime identity와 OIDC subject는 동일하고, 현행 subject의 runtime/Cloud Tasks service-agent dual actAs와 runtime enqueuer는 관찰됐다. 그러나 target dedicated dispatcher/converter identities가 모두 없어 전용 subject의 dual actAs, three-identity split, converter service-resource invoker 증거는 FAIL이다.
+- bucket은 읽을 수 있고 public principal binding은 없었으나 UBLA=false, PAP not enforced라 target hardening은 FAIL이다. target converter 부재 때문에 private ingress, no-public invoker negative probe, expected-email positive/wrong/missing fail-closed, all-traffic egress와 internet-deny/Google-API-allow pair, converter-only 404, readiness, HWP E2E, pinned revision 및 live rollback은 BLOCKED다.
+- 판정: ADR 문서 검토와 scoped preflight approval record는 PASS지만 live target staging readiness는 FAIL, T10 completion은 BLOCKED, T11은 NOT AUTHORIZED/BLOCKED다. cloud/runtime mutation은 0건이며 rollback은 no-op이다.
+- exact URL/audience, service-account email, project ID/number, bucket/object path, resource/task identifier, token/credential은 evidence나 notepad에 기록하지 않았다.
+
+## 2026-07-17 17:36:44 +09:00 T5 approved staging behavior verification
+- Staging Scheduler invocation succeeded twice with exit 0 while a direct no-token maintenance POST remained HTTP 403. A non-identifying recovery fixture was directly observed from stale `processing` to worker terminal `completed`; the second invocation left its terminal timestamp unchanged and queue depth at zero.
+- Cloud Tasks Data Access audit rows were unavailable, so `CreateTask` could not be independently counted from audit logs. The correlated maintenance HTTP 200, worker HTTP 200, and terminal Firestore document provide the end-to-end delivery evidence without relying on a partial log alone.
+- Exact upload cleanup exposed a staging code defect: with batch limit 1, `expireUploadSessionsForCleanup` can return `hasMore=true` behind an ineligible first row, but `runMaintenance` does not consume the cursor and each invocation restarts at page one. Repeated live summaries showed zero attempts with `hasMore=true`, and the isolated expired fixture was starved.
+- Per the stop-on-code-defect constraint, no unrelated document/object was inspected or changed. Both fixture documents, both fixture objects, the generated result, and the external temp fixture were removed and their absence verified. Exact cleanup and its re-invocation idempotency remain unverified pending a separately approved pagination fix.
+
+## 2026-07-17 18:03:44 +09:00 T6 approved staging fixture pagination verification
+
+- `READY` 상태만으로 behavioral acceptance를 닫지 않고, `general`, `qna`, `notice` 각각 3건의 비식별 fixture로 category별 2+1 페이지와 unfiltered 5+4 페이지를 실제 Firestore `runQuery` API에서 관찰했다.
+- 네 경로 모두 `createdAt DESC`, 페이지 경계, duplicate 0, omission 0이었고, 동일 fixture에 Memory store의 filter/sort/offset 계약을 적용한 기대 순서와 정확히 일치했다.
+- PowerShell의 `Invoke-RestMethod` 결과를 `@(...)`로 감싼 첫 하네스는 Firestore JSON 배열을 한 항목처럼 처리해 부분 결과를 만들었다. 원문 응답을 `ConvertFrom-Json` 후 명시적으로 열거해야 각 query result frame을 안정적으로 수집할 수 있다.
+- 첫 실패 실행도 `finally`에서 fixture 9건 삭제 및 개별 404 9건을 확인했고, 수정된 최종 실행도 생성 9건, 삭제 9건, 개별 absence 9건으로 끝났다. 실패 또는 cleanup 누락을 fixture 0건으로 숨기지 않았다.
+- Fresh composite index 관찰은 정확한 leading fields의 board index 1개와 `READY` 1개를 확인했다. production, 실제 board/user data, rules, jobs index, IAM, workflow는 변경하지 않았다.
+- project/account/resource/document identifier, URL, token, credential은 evidence와 notepad에 기록하지 않았다.
+
+## 2026-07-17 18:40:00 +09:00 T6 API compile regression follow-up
+
+- T6 staging fixture/index 행동은 정상이며 후속 build 실패는 API `tsconfig.json`이 strict NodeNext/ES2022에서 CommonJS/ES2020으로 덮인 독립 compiler-config 회귀였다. 원래 설정 복구 후 source 수정 없이 build와 typecheck가 exit 0이었다.
+- `outDir`이 빠진 잘못된 `tsc` 실행은 `src`에 대응 `.ts`보다 우선 해석되는 CommonJS `.js`를 방출할 수 있다. 설정 복구만으로 끝내지 말고 untracked emit을 검사해야 하며, 이번에는 대응 `.ts`가 있는 미추적 `.js` 41개만 제거했다.
+- stale emit 제거 전 board 표적 테스트는 `exports is not defined in ES module scope`로 3건 실패했고, 제거 후 4/4 통과했다. 전체 API suite도 17 files, 331/331 통과해 config 복구와 산출물 cleanup을 함께 검증했다.
+- `board-store.ts`와 `board-store.list.test.ts` LSP diagnostics는 0건이었다. agent-lsp daemon은 시작되지 않았으므로 그 실패를 diagnostics 성공으로 오인하지 않았고, strict `tsc` build/typecheck 결과로 전체 타입 경계를 별도 확인했다.
+- 후속 agent-lsp 재시작은 성공했고, 최종 agent-lsp diagnostics도 board store, 표적 테스트, API tsconfig 모두 오류 없음이었다. 앞의 daemon 실패는 최종 판정이 아니라 복구 전 중간 상태다.
+
+## 2026-07-17 22:08:00 +09:00 T11 local verification unblock
+
+- `apps/api/tsconfig.json`의 작업트리는 HEAD의 strict NodeNext/ES2022/outDir 설정 전체가 CommonJS/ES2020/no-outDir로 대체된 회귀였으며, 사용자 고유 부분 변경은 없었다. 파일을 HEAD blob과 byte 단위로 동일하게 복구했다.
+- `apps/api/src/**/*.js` 42개는 모두 untracked, 대응 `.ts` 보유, 2026-07-17 12:52:37–38Z 단일 emit 군집, CommonJS compiler marker 보유 산출물이었다. 현재 TypeScript의 격리 재-emit과 25개는 SHA-256까지 같았고 나머지 17개 차이도 TypeScript `esModuleInterop` helper 형태뿐이어서 source를 shadow하는 generated output으로 판정해 제거했다.
+- `apps/api/tsconfig.json.agent-lsp-backup`은 HEAD API tsconfig blob과 동일했고, 루트 `tsconfig.json.agent-lsp-backup`은 보존한 untracked 루트 `tsconfig.json`과 SHA-256이 같아 agent-lsp backup 두 개만 제거했다. 루트 `tsconfig.json`과 모든 `.ts` 작업트리 변경은 보존했다.
+- readiness 테스트는 각 env mutation 뒤 dynamic import를 수행하고 `afterEach`의 `vi.resetModules()`로 module-scope config capture를 무효화한다. stale `.js` 제거 후 실제 TypeScript `config.ts`가 재평가되어 missing issuer fail-closed와 fully configured warm-up 경로가 모두 실행됐다.
+- 최종 검증: API Vitest 18 files/338 tests 통과, API typecheck exit 0, API build exit 0, `dist/converter-readiness.js` ESM dynamic import/export 확인, `apps/api/src/**/*.js` 0개, 대상 TypeScript 4개 LSP diagnostics 0건, `git diff --check` exit 0. Cloud Run/GCP/IAM/Scheduler/queue 변경은 수행하지 않았다.
+
+## 2026-07-17 22:35:00 +09:00 T11 approved staging Direct VPC execution
+
+- Direct VPC egress는 기존 public API subnet을 재사용하지 않고 전용의 비중첩 `/26` subnet, Private Google Access, private Google APIs DNS, Google API HTTPS allow의 높은 우선순위, converter network tag 전용 `0.0.0.0/0` deny-all firewall rule, regional Cloud NAT 부재를 함께 실제 관찰해야 public internet 차단을 주장할 수 있다.
+- staging Cloud Build는 immutable converter image를 만들기 전에 non-secret `iam.serviceAccounts.get` 권한 거부로 실패했다. 이 경우 converter deploy/IAM/dispatcher/API target mutation을 진행하지 않고, egress foundation만 보존한 채 OIDC/HWP/duplicate/rollback live acceptance를 미실행으로 남겨야 한다.
+- provisioning은 고정된 API service-account 이름을 가정하면 identity separation을 깨뜨릴 수 있다. 실제 public API runtime identity를 runtime에서 읽고 dispatcher/converter 전용 identity와 같으면 fail-closed해야 한다.
+
+## 2026-07-17 23:05:00 +09:00 T11 Cloud Build IAM follow-up
+
+- Cloud Build 정의에 `serviceAccount`가 없으면 default Cloud Build execution identity가 사용된다. `gcloud builds submit` 전의 `iam.serviceAccounts.get` 거부는 제출자에게 그 **정확한 service-account resource** 조회 권한이 없다는 의미이며, default build service account 자체의 runtime 권한 결함으로 단정하면 안 된다.
+
+## 2026-07-17 Blocked work-state revalidation
+
+- 최신 권한 확인에서 현재 제출자는 정확한 default Cloud Build execution identity resource에 대해 `iam.serviceAccounts.get`, `iam.serviceAccounts.getIamPolicy`, `iam.serviceAccounts.setIamPolicy`를 모두 보유하지 않는다. 이 세션은 정책 변경을 시도하지 않았다.
+- T11 재개에는 권한 있는 staging 관리자가 해당 단일 identity resource에 필요한 viewer 수준의 최소 조회 권한을 부여해야 한다. 그 전에는 immutable build, private deploy, OIDC/HWP/duplicate/rollback live acceptance를 수행하거나 완료로 주장하지 않는다.
+- T7은 stale-timeout 재시도 금지 상태다. 제품 코드 또는 영구 인증 설정 변경 없이 사용할 수 있는 별도 승인된 임시 인증 QA 메커니즘이 있어야 한다.
+- T5는 cursor 수정이 포함된 새 승인 staging API revision을 기다린다. T12 및 F1–F4는 위 선행 staging/행동 증거가 완료될 때까지 downstream 차단 상태를 유지한다.
+
+## 2026-07-18 T5 fail-closed deployment gate recheck
+
+- 현재 100% staging API revision의 생성 시각은 2026-07-16이고 cursor-starvation 로컬 수정 기록은 2026-07-17이므로, 새 revision을 명시적으로 관찰하기 전에는 해당 수정이 배포되었다고 볼 수 없다.
+- 표적 로컬 OIDC/maintenance 회귀는 `pnpm --filter api test -- src/routes/maintenance.test.ts src/services/job-store.maintenance.test.ts`에서 2 files/29 tests로 통과했지만, 이는 live Scheduler OIDC·exact cleanup 수용 증거를 대체하지 않는다.
+- active plan과 이 notepad에는 cursor 수정만 포함하는 exact staging-only deploy의 사전 사용자 승인이 기록되어 있지 않다. 게다가 checked-in staging build input은 전체 더티 worktree를 submit하므로 unrelated 변경까지 배포할 위험이 있다. 따라서 Cloud Build/Run/Scheduler/IAM/Firestore/GCS mutation과 fixture 생성 없이 fail-closed로 종료했다.
+- 재개 조건: cursor repair만 포함한 격리된 staging artifact에 대한 기록된 승인 후, promoted 100% revision을 먼저 관찰하고 단일 비식별 expired-upload fixture의 OIDC negative/positive, exact cleanup, 재호출 idempotency, redacted cloud-state receipt를 새로 수집한다.
+- 최소 수정은 승인된 staging submitter에게 default Cloud Build execution service account 한 개에만 `roles/iam.serviceAccountViewer`를 부여하는 것이다. 이 GA role에는 필요한 `iam.serviceAccounts.get`이 포함되고 `iam.serviceAccounts.setIamPolicy`는 포함되지 않는다. submitter에게 policy mutation 권한이 없으면 재시도나 우회 대신 authorized administrator에게 해당 resource-level binding만 요청하고 fail-closed한다.
+
+## 2026-07-17 T11 fresh permission recheck
+
+- 2026-07-17 재확인에서 active caller의 exact default Cloud Build execution identity resource에 대한 `iam.serviceAccounts.get`은 여전히 `PERMISSION_DENIED`였다.
+- 이 상태는 `SERVICE_ACCOUNT_READ=DENIED_OR_UNAVAILABLE`로 요약된다. 계정 이메일, 프로젝트 번호, service-account resource identifier, troubleshooter URL, 토큰, credential, bucket/object 경로는 기록하지 않았다.
+- fail-closed 상태를 유지한다: Cloud Build submit, immutable converter image build, private Cloud Run converter deploy, dedicated identity/IAM provisioning, queue target mutation, dispatcher flag 전환, OIDC/HWP 변환 live acceptance, duplicate/retry/rollback staging 검증을 모두 미시행한다.
+
+## 2026-07-18 T7/T11 approved-execution reattempt
+
+- 사용자의 “바로 전부 진행” 지시는 T7의 저장소 밖 일회성 synthetic persistence browser QA와 T11의 staging-only rollout 범위 승인으로 적용했다.
+- T11은 첫 read-only gate에서 exact default Cloud Build execution service-account resource의 `iam.serviceAccounts.get`이 다시 거부되어 fail-closed로 끝났다. immutable build, deployment, IAM mutation, queue/dispatcher cutover, production action은 0건이다.
+- T7은 승인된 isolated browser QA를 실행하려 했지만 담당 runtime agent가 실제 작업 시작 전에 월간 quota 초과로 종료했다. 제품 파일과 Firebase/cloud 설정은 변경되지 않았고, 합성 auth/UI/browser 결과를 성공으로 주장할 근거는 없다.
+- T7 재개는 같은 non-persistent fixture 승인 범위 안에서 browser execution capacity가 복구되거나 동등한 격리 실행 도구가 제공될 때 가능하다. T11 재개는 authorized administrator의 exact resource-level viewer grant 뒤 immutable build부터 처음으로 다시 시작한다.
+- T11 재개 조건은 권한 있는 staging 관리자가 해당 단일 default Cloud Build execution service account resource에 `roles/iam.serviceAccountViewer`를 resource-level로 부여하는 것뿐이며, 그 외 어떤 build 재시도, IAM 변경, cloud mutation, deploy, production 전환도 허용되지 않는다.
+- 이 기록은 `.omo/notepads/code-frontend-improvement-final/learnings.md`에 append했을 뿐이며 `.omo/plans/code-frontend-improvement-final.md`, T11 plan checkbox(`[~]`), 소스/config/infra/workflow/IAM/deploy, 다른 evidence 파일은 변경하지 않았다.
+
+## 2026-07-18 T7 browser-QA 실행 중단
+
+## 2026-07-18 T7 continuation quota block
+
+- T7의 승인된 격리 browser QA를 위해 기존 세션을 재개했으나, 세션은 작업 도구를 실행하기 전에 모델 월간 quota 초과로 즉시 거부됐다.
+- 이번 연속 시도에서는 local Next server, Chromium context, synthetic persistence fixture, network/console/keyboard 관찰, test/lint/typecheck, evidence append가 모두 실행되지 않았으며 제품·Firebase·cloud·IAM·설정 변경도 없었다.
+- 따라서 authenticated 375×812 키보드 흐름과 network 0건이라는 acceptance evidence는 여전히 부재하다. browser execution capacity 또는 동등한 격리 browser 도구가 준비된 뒤에만 같은 승인 범위에서 재개한다.
+
+## 2026-07-18 T7 explicit quota response
+
+- T7의 같은 `visual-engineering` 세션을 browser evidence-only 범위로 재개했으나, 어떤 서버·Chromium·fixture·테스트·evidence append도 시작되기 전에 `You have exceeded your monthly quota`라는 명시 응답이 반환됐다.
+- 따라서 과거 stale timeout의 원인을 추측할 필요 없이, 현재 그 세션/모델 경로에는 quota 차단이 직접 확인됐다. 제품 source/Firebase 설정/cloud/IAM에는 변경이 없고, T7은 실제 375×812 authenticated browser evidence가 생길 때까지 `[~]`를 유지한다.
+
+- 사용자 승인 isolated synthetic-persistence QA는 317초 동안 유휴 상태로 브라우저 도구 호출과 관찰이 0건이어서 취소되었다. 브라우저 증거는 없으며 제품/Firebase/cloud/config 파일은 변경되지 않았고 성공 주장은 허용되지 않는다. 사용 가능한 isolated browser runtime이 마련될 때만 재개하며, 유휴 agent를 맹목적으로 반복하지 않는다.

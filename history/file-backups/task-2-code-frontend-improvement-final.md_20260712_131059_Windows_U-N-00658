@@ -1,0 +1,144 @@
+# T2 증거 — API에서 내부 진단과 공개 작업 상태 분리
+
+## 범위
+- 변경 경계: `conversion-service.ts` 실패 처리 → `job-store.ts` 저장 계약 → `storage-service.ts` 공개 직렬화 → `v1.ts` 상태/다운로드/member 응답.
+- T1 `PublicConversionErrorCode`, 고정 메시지, `downloadAvailable` 판별 union을 재사용했다.
+- agent-lsp daemon 시작이 10초 내 실패했고 blast-radius는 LSP 미초기화로 실패했다. Serena 심볼/참조 분석과 내장 LSP diagnostics로 대체했다.
+
+## Baseline
+- 먼저 기존 회원 소유 완료 작업의 200 상태, 진행률 100, 보호 다운로드 URL, 내부 경로 비노출을 응답 payload 특성화 테스트로 고정했다.
+- `pnpm --filter api test -- src/routes/v1.download-auth.test.ts`: 17/17 통과.
+
+## RED
+- 정상 완료, 결과 누락, 만료, 삭제, 실패, 처리 중 6개 공개 상태 행렬과 raw 진단 공격 문자열 비노출 테스트를 추가했다.
+- 같은 명령 결과: 신규 6건 실패, 기존 17건 통과. `downloadAvailable`이 모두 `undefined`여서 의도한 실패임을 확인했다.
+
+## GREEN
+- 실패 시 raw Error(name/message/stack)는 `event=conversion_failed`, `jobId`를 포함한 JSON server log에만 기록한다.
+- 저장 필드는 T1 `errorCode`와 고정 공개 메시지만 사용한다. legacy 실패 레코드에 `errorCode`가 없어도 `conversion_failed`로 정규화한다.
+- 공개 download 상태는 deleted → failed → expired → non-completed → missing-result → available 순으로 서버 계산한다.
+- status, member history, 실제 download route가 동일 계산기를 공유한다.
+- 집중: 4 files, 108/108 통과. 전체 API: 13 files, 290/290 통과. `pnpm --filter api build`: exit 0.
+
+## Supertest 권한 행렬
+- 실제 `createApp()` 응답 기반 테스트에서 익명 no-token 401, wrong-token 403, correct-token 200; 회원 no-token 401, 다른 회원 403, owner 200을 통과했다.
+- owner 200 payload는 `downloadAvailable:true`이며 source/result/object path는 없다.
+
+## 실HTTP 아티팩트
+- 빌드된 앱을 `127.0.0.1:60455` 임시 listener로 실행했다.
+- `/v1/jobs/live-t2-proof`: no-token 401 `unauthorized`; wrong-token 403 `forbidden`; correct token 200, `status=completed`, `downloadAvailable=true`, 보호 proxy URL.
+- cleanup receipt: `{"cleanup":"listener_closed","listening":false}`.
+
+## 적대적 probe
+- 실패 저장 레코드의 `message`에 local path, `soffice`, `gs://`, `X-Goog-Signature`, token, stack을 주입했다.
+- HTTP 응답은 `errorCode=conversion_failed`, T1 고정 메시지만 반환했고 금지 문자열 정규식은 불일치했다.
+- 만료 download HTTP 오류도 저장 message를 재사용하지 않는다.
+
+## 도구 참고
+- `ocr review --working-tree`는 설치 CLI가 해당 플래그를 지원하지 않아 usage 오류로 종료했다. 코드 검증은 diagnostics/test/build/실HTTP로 수행했다.
+
+---
+
+## 독립 적대 검증 — 2026-07-12
+
+### 판정
+
+**VERDICT: REJECT**
+
+테스트와 빌드는 통과하지만 T2의 내부 진단/소유 정보 분리 및 최소 공개 목표를 만족하지 않는다. 실제 `createApp()` Supertest 응답에서 승인된 외부 status 호출자에게 내부 삭제 주체와 tombstone 보존 정책 필드가 직렬화되며, 회원 전용 상세/삭제 라우트는 타회원 tombstone의 존재를 서로 다른 HTTP 결과로 노출한다.
+
+### 독립 실행 결과
+
+- `pnpm --filter api test -- src/routes/v1.download-auth.test.ts src/routes/v1.member-jobs.test.ts` → 2 files, **42/42 passed**.
+- `pnpm --filter api test` → 13 files, **290/290 passed**.
+- `pnpm --filter api build` → `tsc`, **exit 0**.
+- LSP diagnostics: `conversion-service.ts`, `job-store.ts`, `storage-service.ts`, `v1.ts` 모두 **No diagnostics found**.
+- `git diff --check` → 기존 dirty 변경인 `apps/api/src/routes/v1.download-auth.test.ts` 등의 CRLF/trailing-whitespace를 대량 보고했다. 본 독립 검증은 해당 파일을 수정하지 않았다.
+- agent-lsp blast-radius는 daemon 미초기화로 실행되지 않았다. 제품 파일은 변경하지 않았고 내장 LSP diagnostics와 실제 HTTP 경계로 검증했다.
+
+### 수용 기준 감사
+
+- 6상태 행렬: 기존 실제 route 테스트에서 completed+result, completed+missing-result, expired, deleted, failed, processing이 각각 coherent availability union을 반환한다(6/6 통과).
+- raw exception containment 및 legacy error normalization: 실패 상태 테스트는 path/`soffice`/`gs://`/signed-query/token/stack 비노출과 `conversion_failed` 고정 메시지를 검증한다. 소스에서도 raw 예외는 server log에만 남고 공개 DTO는 안전 코드/메시지로 정규화한다.
+- no-token/wrong-token/owner: 실제 익명 tombstone probe에서 각각 401/403/200을 확인했다.
+- 저장 reusable URL: `getStatusResponse`는 저장된 `job.downloadUrl`을 복사하지 않고 보호 다운로드 URL을 재계산한다. 관련 route 테스트도 비인가 응답 비노출을 통과했다.
+- **실패 — 최소 공개 직렬화:** `storage-service.ts`의 `getStatusResponse`가 `metadataExpiresAt`, `deletedAt`, `deletedBy`, `tombstoneUntil`을 공개 `JobStatusResponse`에 복사한다. 특히 `deletedBy`는 삭제를 수행한 내부 회원 UID이며 공개 작업 상태에 불필요한 소유/감사 정보다.
+- **실패 — cross-member tombstone 경계:** `v1.ts`의 `GET /v1/me/jobs/:jobId` 및 `DELETE /v1/me/jobs/:jobId`는 `getJobForUser` 실패 뒤 raw `getJob(jobId)`의 `status === "deleted"`만 검사하고 `raw.userId === request.user.uid`를 재검증하지 않는다. 따라서 타회원 삭제 작업이 GET 410 및 DELETE 200/noop으로 식별된다.
+
+### 실제 HTTP 증거 1 — 삭제 진단/소유 정보 공개
+
+제품 파일을 만들지 않은 일회성 `pnpm --filter api exec tsx -e ...`에서 익명 소유 tombstone을 저장하고 `GET /v1/jobs/t2-deleted-leak-proof`를 호출했다.
+
+```json
+{"label":"none","status":401,"body":{"error":{"code":"unauthorized","message":"작업 상태 조회 권한이 없습니다."}}}
+{"label":"wrong","status":403,"body":{"error":{"code":"forbidden","message":"작업 상태 조회 권한이 없습니다."}}}
+{"label":"owner","status":200,"body":{"jobId":"t2-deleted-leak-proof","status":"deleted","progress":100,"createdAt":"2026-07-12T03:58:36.219Z","updatedAt":"2026-07-12T03:58:36.219Z","expiresAt":"2026-07-12T03:59:36.219Z","metadataExpiresAt":"2026-07-12T15:58:36.219Z","deletedAt":"2026-07-12T03:58:36.213Z","deletedBy":"internal-owner-uid-SECRET","tombstoneUntil":"2026-07-13T03:58:36.219Z","downloadAvailable":false,"downloadUnavailableReason":"deleted"}}
+```
+
+이는 단순 소스 필드 존재가 아니라 승인된 외부 status 호출의 정확한 응답 누출이다. 공개 상태에 필요한 것은 `status=deleted`, availability와 안전 사유이며 `deletedBy` 및 내부 metadata/tombstone 보존 시각은 최소 공개 목표를 위반한다. 기존 6상태 삭제 fixture는 `deletedAt`만 설정하여 이 결함을 검출하지 못한다.
+
+### 실제 HTTP 증거 2 — 타회원 tombstone oracle
+
+owner가 `owner-uid`인 삭제 레코드를 저장하고 `attacker-uid` 인증으로 회원 라우트를 호출했다.
+
+```json
+{"method":"get","status":410,"body":{"error":{"code":"job_deleted","message":"삭제된 작업입니다."}}}
+{"method":"delete","status":200,"body":{"ok":true,"jobId":"t2-cross-member-deleted","status":"deleted","noop":true}}
+```
+
+비삭제 타회원/미존재 작업은 404인데 삭제 타회원은 위 결과이므로 존재와 삭제 상태가 재현 가능하게 구별된다. 이는 owner/cross-member 경계를 위반한다.
+
+### 적대 범주 적용성
+
+- 적용: malformed/missing/wrong credentials, stale/deleted 상태, legacy 실패 저장값, raw 진단 문자열, stored reusable URL, dirty worktree/misleading green output을 점검했다.
+- 테스트 통과만으로 승인하지 않았다. 290/290 green 상태에서도 실제 직렬화와 cross-member oracle 결함을 재현했다.
+- 비적용: 시각 UI/브라우저 레이아웃, 성능/부하, 접근성, 모바일, 국제화는 이번 T2의 API 직렬화·인가·공개 상태 경계와 무관하다. 실제 외부 클라우드/GCS 장애 주입도 공개 DTO/소유 경계 결함 재현에 필요하지 않다.
+
+### 필수 수정
+
+1. 공개 `JobStatusResponse`에서 최소 상태 계약에 불필요한 `deletedBy`를 제거하고, `metadataExpiresAt`, `deletedAt`, `tombstoneUntil`도 T2 최소 공개 계약상 필요한지 명시적으로 재검토하여 내부/관리 DTO로 분리한다.
+2. 회원 상세/삭제 tombstone 분기에서 raw record의 owner를 재검증하고, 미소유 tombstone은 미존재와 동일한 404로 처리한다.
+3. 실제 `deletedBy`가 설정된 fixture와 타회원 삭제 tombstone GET/DELETE regression tests를 추가한다.
+
+### AdversarialVerify
+
+```json
+{
+  "AdversarialVerify": {
+    "task": "T2 API에서 내부 진단과 공개 작업 상태 분리",
+    "verdict": "REJECT",
+    "acceptance": {
+      "sixStateMatrix": "PASS",
+      "rawExceptionContainment": "PASS",
+      "legacyErrorNormalization": "PASS",
+      "ownerNoTokenWrongToken": "PASS",
+      "crossMemberBoundary": "FAIL",
+      "storedReusableUrlLeakage": "PASS",
+      "leastDataPublicSerialization": "FAIL"
+    },
+    "reproducibleDefects": [
+      {
+        "id": "T2-AV-1",
+        "route": "GET /v1/jobs/:jobId",
+        "status": 200,
+        "evidence": "authorized deleted-job response contains deletedBy=internal-owner-uid-SECRET plus metadataExpiresAt/deletedAt/tombstoneUntil",
+        "severity": "blocking"
+      },
+      {
+        "id": "T2-AV-2",
+        "routes": ["GET /v1/me/jobs/:jobId", "DELETE /v1/me/jobs/:jobId"],
+        "actor": "authenticated non-owner",
+        "evidence": "other member tombstone returns GET 410 and DELETE 200 noop instead of ownership-hiding 404",
+        "severity": "blocking"
+      }
+    ],
+    "verification": {
+      "focusedTests": "42/42 passed",
+      "apiTests": "290/290 passed",
+      "apiBuild": "exit 0",
+      "lspDiagnostics": "0 diagnostics in 4 required source files",
+      "actualHttpProof": "2 blocking defects reproduced through createApp + Supertest"
+    }
+  }
+}
+```

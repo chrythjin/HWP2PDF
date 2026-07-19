@@ -1,0 +1,191 @@
+"use client";
+
+// ---------------------------------------------------------------------------
+// JobHistoryList — renders the authenticated user's conversion jobs.
+//
+// Download availability is governed by the T1/T2 server-computed
+// `downloadAvailable` discriminated contract:
+//   - downloadAvailable === true  -> download button enabled
+//   - downloadAvailable === false -> unavailable label with reason
+//   - legacy (undefined)          -> safe fallback: only enable if
+//                                    downloadUrl is present AND status is
+//                                    completed AND downloadExpiresAt is in
+//                                    the future.
+//
+// The component NEVER enables a download from status === "completed" alone.
+// ---------------------------------------------------------------------------
+
+import type {
+  DownloadUnavailableReason,
+  JobStatusResponse,
+} from "@hwp2pdf/shared";
+
+interface JobHistoryListProps {
+  jobs: JobStatusResponse[];
+  onDelete: (jobId: string) => void;
+  deletingJobId: string | null;
+  /** Authenticated download handler; page boundary owns the Firebase user. */
+  onDownload: (job: JobStatusResponse) => void;
+  /** jobId of the row currently downloading, or null. */
+  downloadingJobId: string | null;
+  /** Per-job download error for safe deterministic UI display. */
+  downloadError: { jobId: string; message: string } | null;
+}
+
+// ---- Legacy fallback: only for records without downloadAvailable ----
+function isLegacyDownloadExpired(job: JobStatusResponse): boolean {
+  if (!job.downloadExpiresAt) {
+    return job.status !== "completed";
+  }
+  return new Date(job.downloadExpiresAt).getTime() <= Date.now();
+}
+
+const UNAVAILABLE_REASON_LABELS: Record<DownloadUnavailableReason, string> = {
+  not_completed: "진행 중",
+  failed: "실패",
+  expired: "다운로드 만료됨",
+  deleted: "삭제됨",
+  result_unavailable: "다운로드 불가",
+  access_denied: "접근 권한 없음",
+};
+
+function getUnavailableLabel(job: JobStatusResponse): string {
+  if (job.downloadAvailable === false && job.downloadUnavailableReason) {
+    return UNAVAILABLE_REASON_LABELS[job.downloadUnavailableReason] ?? "다운로드 불가";
+  }
+  // Legacy fallback
+  return "다운로드 만료됨";
+}
+
+function canDownloadJob(job: JobStatusResponse): boolean {
+  // T1/T2 discriminated contract: server-computed availability
+  if (job.downloadAvailable === true) {
+    return true;
+  }
+  if (job.downloadAvailable === false) {
+    return false;
+  }
+  // Legacy: downloadAvailable is undefined — safe fallback
+  if (job.status !== "completed") return false;
+  if (!job.downloadUrl) return false;
+  return !isLegacyDownloadExpired(job);
+}
+
+function formatDate(iso?: string): string {
+  if (!iso) return "-";
+  try {
+    return new Date(iso).toLocaleString("ko-KR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  idle: "대기 중",
+  uploading: "업로드 중",
+  queued: "대기열 대기",
+  processing: "변환 중",
+  completed: "완료",
+  failed: "실패",
+  expired: "만료",
+  deleted: "삭제됨",
+};
+
+export default function JobHistoryList({
+  jobs,
+  onDelete,
+  deletingJobId,
+  onDownload,
+  downloadingJobId,
+  downloadError,
+}: JobHistoryListProps) {
+  if (jobs.length === 0) {
+    return (
+      <div className="text-center py-16 text-zinc-500 dark:text-zinc-400" data-testid="history-empty">
+        변환 이력이 없습니다.
+      </div>
+    );
+  }
+
+  return (
+    <ul className="space-y-3" data-testid="history-list">
+      {jobs.map((job) => {
+        const canDownload = canDownloadJob(job);
+        const isDeleting = deletingJobId === job.jobId;
+        const isDownloading = downloadingJobId === job.jobId;
+        const hasDownloadError = downloadError?.jobId === job.jobId;
+
+        return (
+          <li
+            key={job.jobId}
+            className="bg-white/40 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800 backdrop-blur-md rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+            data-testid={`history-row-${job.jobId}`}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-sm text-zinc-700 dark:text-zinc-300 truncate">
+                  {job.jobId}
+                </span>
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                  data-testid={`status-badge-${job.jobId}`}
+                >
+                  {STATUS_LABELS[job.status] ?? job.status}
+                </span>
+              </div>
+              <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+                {formatDate(job.createdAt)}
+              </div>
+              {hasDownloadError && downloadError && (
+                <div
+                  className="mt-1 text-xs text-rose-600 dark:text-rose-400"
+                  data-testid={`download-error-${job.jobId}`}
+                  role="alert"
+                >
+                  {downloadError.message}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              {canDownload ? (
+                <button
+                  type="button"
+                  onClick={() => onDownload(job)}
+                  disabled={isDownloading}
+                  className="px-4 py-2 text-sm font-medium rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-sm hover:shadow-md transition-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                  data-testid={`download-button-${job.jobId}`}
+                >
+                  {isDownloading ? "다운로드 중..." : "다운로드"}
+                </button>
+              ) : (
+                <span
+                  className="text-sm text-zinc-400 dark:text-zinc-600"
+                  data-testid={`download-unavailable-label-${job.jobId}`}
+                >
+                  {getUnavailableLabel(job)}
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={() => onDelete(job.jobId)}
+                disabled={isDeleting}
+                className="px-3 py-2 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-200 dark:hover:border-rose-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                data-testid={`delete-button-${job.jobId}`}
+              >
+                {isDeleting ? "삭제 중..." : "삭제"}
+              </button>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

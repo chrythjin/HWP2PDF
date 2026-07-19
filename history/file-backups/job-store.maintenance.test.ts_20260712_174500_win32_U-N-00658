@@ -1,0 +1,187 @@
+import { describe, expect, it } from "vitest";
+import { FirestoreJobStore, MemoryJobStore, type JobRecord, type UploadSessionRecord } from "./job-store.js";
+
+const iso = (value: number) => new Date(value).toISOString();
+
+function processingJob(jobId: string, updatedAt: string, status: JobRecord["status"] = "processing"): JobRecord {
+  return {
+    jobId,
+    originalFileName: `${jobId}.hwp`,
+    sourcePath: `tmp/${jobId}.hwp`,
+    status,
+    progress: 70,
+    expiresAt: iso(Date.now() + 60_000),
+    createdAt: updatedAt,
+    updatedAt,
+    ownerType: "user",
+    userId: "owner-1",
+  };
+}
+
+function session(jobId: string, expiresAt: string, objectPath = `staging/${jobId}/file.hwp`): UploadSessionRecord {
+  return { jobId, objectPath, fileName: "file.hwp", fileSize: 10, ownerType: "user", userId: "owner-1", expiresAt };
+}
+
+describe("MemoryJobStore maintenance", () => {
+  it("recovers a bounded batch instead of collapsing maintenance to one item", async () => {
+    const store = new MemoryJobStore();
+    const cutoff = new Date("2027-01-02T00:00:00.000Z");
+    for (const id of ["batch-a", "batch-b", "batch-c"]) {
+      await store.createJob(processingJob(id, iso(cutoff.getTime() - 1_000)));
+    }
+
+    const result = await store.recoverStaleProcessingJobs({ cutoff, limit: 2 });
+
+    expect(result.jobs.map((job) => job.jobId)).toEqual(["batch-a", "batch-b"]);
+    expect(result.nextCursor).toBeDefined();
+  });
+
+  it("recovers only stale processing jobs once and respects limit/cursor", async () => {
+    const store = new MemoryJobStore();
+    const cutoff = new Date("2027-01-02T00:00:00.000Z");
+    await store.createJob(processingJob("a", iso(cutoff.getTime() - 2_000)));
+    await store.createJob(processingJob("b", iso(cutoff.getTime() - 1_000)));
+    await store.createJob(processingJob("current", iso(cutoff.getTime() - 1_000), "queued"));
+    await store.createJob(processingJob("done", iso(cutoff.getTime() - 3_000), "completed"));
+    await store.createJob({ ...processingJob("deleted", iso(cutoff.getTime() - 4_000), "deleted"), deletedAt: iso(cutoff.getTime() - 500) });
+
+    const first = await store.recoverStaleProcessingJobs({ cutoff, limit: 1 });
+    const second = await store.recoverStaleProcessingJobs({ cutoff, limit: 1, cursor: first.nextCursor });
+    const repeat = await store.recoverStaleProcessingJobs({ cutoff, limit: 10 });
+
+    expect(first.jobs.map((job) => job.jobId)).toEqual(["a"]);
+    expect(second.jobs.map((job) => job.jobId)).toEqual(["b"]);
+    expect(repeat.jobs).toEqual([]);
+    expect((await store.getJob("current"))?.status).toBe("queued");
+    expect((await store.getJob("done"))?.status).toBe("completed");
+    expect((await store.getJob("deleted"))?.status).toBe("deleted");
+  });
+
+  it("loses the recovery claim when an active worker refreshes the timestamp", async () => {
+    const store = new MemoryJobStore();
+    const cutoff = new Date(Date.now() + 10);
+    await store.createJob(processingJob("race", iso(cutoff.getTime() - 1_000)));
+    const result = await store.recoverStaleProcessingJobs({ cutoff, limit: 10 }, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await store.updateJob("race", { status: "processing" });
+    });
+    expect(result.jobs).toEqual([]);
+    expect((await store.getJob("race"))?.status).toBe("processing");
+  });
+
+  it("separates expiry transition from exact, owner-safe one-time cleanup claim", async () => {
+    const store = new MemoryJobStore();
+    const cutoff = new Date("2026-01-02T00:00:00.000Z");
+    await store.createUploadSession(session("expired", iso(cutoff.getTime() - 1_000)));
+    const page = await store.expireUploadSessionsForCleanup({ cutoff, limit: 1 });
+    const repeatedExpiry = await store.expireUploadSessionsForCleanup({ cutoff, limit: 1 });
+    expect(page.sessions[0]).toMatchObject({ jobId: "expired", status: "expired" });
+    expect(repeatedExpiry.sessions).toEqual([]);
+    expect(await store.claimExpiredUploadObject({ ...page.sessions[0], objectPath: "staging/foreign/file.hwp" })).toBeNull();
+    expect(await store.claimExpiredUploadObject({ ...page.sessions[0], userId: "foreign" })).toBeNull();
+    expect(await store.claimExpiredUploadObject(page.sessions[0])).toEqual(page.sessions[0]);
+    expect(await store.claimExpiredUploadObject(page.sessions[0])).toBeNull();
+  });
+
+  it("uses an opaque cursor for separator-like ids and rejects malformed cursors", async () => {
+    const store = new MemoryJobStore();
+    const cutoff = new Date("2027-01-02T00:00:00.000Z");
+    await store.createJob(processingJob("id|with|separators", iso(cutoff.getTime() - 2_000)));
+    await store.createJob(processingJob("next", iso(cutoff.getTime() - 1_000)));
+
+    const first = await store.recoverStaleProcessingJobs({ cutoff, limit: 1 });
+    const second = await store.recoverStaleProcessingJobs({ cutoff, limit: 1, cursor: first.nextCursor });
+
+    expect(first.jobs.map((job) => job.jobId)).toEqual(["id|with|separators"]);
+    expect(first.nextCursor).not.toContain("id|with|separators");
+    expect(second.jobs.map((job) => job.jobId)).toEqual(["next"]);
+    await expect(store.recoverStaleProcessingJobs({ cutoff, limit: 1, cursor: "not-a-maintenance-cursor" })).rejects.toThrow(
+      "Invalid maintenance cursor",
+    );
+  });
+});
+
+describe("FirestoreJobStore transaction maintenance", () => {
+  it("re-reads the job in the transaction and permits one recovery only", async () => {
+    const cutoff = new Date("2026-01-02T00:00:00.000Z");
+    const state = new Map<string, JobRecord>([["stale", processingJob("stale", iso(cutoff.getTime() - 1_000))]]);
+    const ref = { id: "stale" };
+    const transaction = {
+      get: async () => ({ exists: state.has("stale"), data: () => state.get("stale") }),
+      set: (_ref: unknown, value: JobRecord) => state.set(value.jobId, value),
+    };
+    const query = { get: async () => ({ docs: [{ id: "stale", ref, data: () => state.get("stale") }], size: 1 }) };
+    const collection = { where: () => collection, orderBy: () => collection, limit: () => query, doc: () => ref };
+    const firestore = { collection: () => collection, runTransaction: async <T>(fn: (tx: typeof transaction) => Promise<T>) => fn(transaction) };
+    const store = new FirestoreJobStore(firestore as never);
+
+    const first = await store.recoverStaleProcessingJobs({ cutoff, limit: 10 });
+    const second = await store.recoverStaleProcessingJobs({ cutoff, limit: 10 });
+    expect(first.jobs.map((job) => job.jobId)).toEqual(["stale"]);
+    expect(second.jobs).toEqual([]);
+  });
+
+  it("does not recover a job refreshed between scan and transaction", async () => {
+    const cutoff = new Date("2026-01-02T00:00:00.000Z");
+    const scanned = processingJob("race", iso(cutoff.getTime() - 1_000));
+    const current = processingJob("race", iso(cutoff.getTime() + 1_000));
+    const ref = { id: "race" };
+    const transaction = { get: async () => ({ exists: true, data: () => current }), set: () => undefined };
+    const query = { get: async () => ({ docs: [{ id: "race", ref, data: () => scanned }], size: 1 }) };
+    const collection = { where: () => collection, orderBy: () => collection, limit: () => query, doc: () => ref };
+    const firestore = { collection: () => collection, runTransaction: async <T>(fn: (tx: typeof transaction) => Promise<T>) => fn(transaction) };
+
+    const result = await new FirestoreJobStore(firestore as never).recoverStaleProcessingJobs({ cutoff, limit: 10 });
+
+    expect(result.jobs).toEqual([]);
+  });
+
+  it("advances from a transaction-rejected page without skipping or repeating the next candidate", async () => {
+    const cutoff = new Date("2026-01-02T00:00:00.000Z");
+    const staleA = processingJob("a", iso(cutoff.getTime() - 2_000));
+    const staleB = processingJob("b", iso(cutoff.getTime() - 1_000));
+    const state = new Map<string, JobRecord>([["a", { ...staleA, status: "completed" }], ["b", staleB]]);
+    let startAfter: [string, string] | undefined;
+    const docs = [staleA, staleB].map((job) => ({ id: job.jobId, ref: { id: job.jobId }, data: () => job }));
+    const collection = {
+      where: () => collection,
+      orderBy: () => collection,
+      startAfter: (timestamp: string, id: string) => { startAfter = [timestamp, id]; return collection; },
+      limit: (limit: number) => ({
+        get: async () => {
+          const page = docs.filter((doc) => !startAfter || doc.data().updatedAt > startAfter[0] || (doc.data().updatedAt === startAfter[0] && doc.id > startAfter[1])).slice(0, limit);
+          return { docs: page, size: page.length };
+        },
+      }),
+      doc: (id: string) => ({ id }),
+    };
+    const transaction = {
+      get: async (ref: { id: string }) => ({ exists: state.has(ref.id), data: () => state.get(ref.id) }),
+      set: (_ref: { id: string }, value: JobRecord) => state.set(value.jobId, value),
+    };
+    const firestore = { collection: () => collection, runTransaction: async <T>(fn: (tx: typeof transaction) => Promise<T>) => fn(transaction) };
+    const store = new FirestoreJobStore(firestore as never);
+
+    const first = await store.recoverStaleProcessingJobs({ cutoff, limit: 1 });
+    const second = await store.recoverStaleProcessingJobs({ cutoff, limit: 1, cursor: first.nextCursor });
+
+    expect(first.jobs).toEqual([]);
+    expect(first.nextCursor).toBeDefined();
+    expect(second.jobs.map((job) => job.jobId)).toEqual(["b"]);
+  });
+
+  it("revalidates exact upload ownership and path before emitting a cleanup candidate", async () => {
+    const cutoff = new Date("2026-01-02T00:00:00.000Z");
+    const scanned = session("expired", iso(cutoff.getTime() - 1_000));
+    const current = { ...scanned, objectPath: "staging/foreign/file.hwp", userId: "foreign" };
+    const ref = { id: "expired" };
+    const transaction = { get: async () => ({ exists: true, data: () => current }), set: () => undefined };
+    const query = { get: async () => ({ docs: [{ id: "expired", ref, data: () => scanned }], size: 1 }) };
+    const collection = { where: () => collection, orderBy: () => collection, limit: () => query, doc: () => ref };
+    const firestore = { collection: () => collection, runTransaction: async <T>(fn: (tx: typeof transaction) => Promise<T>) => fn(transaction) };
+
+    const result = await new FirestoreJobStore(firestore as never).expireUploadSessionsForCleanup({ cutoff, limit: 10 });
+
+    expect(result.sessions).toEqual([]);
+  });
+});

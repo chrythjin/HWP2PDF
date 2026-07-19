@@ -1,0 +1,122 @@
+# T7: 모바일 회원 내비게이션과 업로드 상태 접근성 개선 — Evidence
+
+## Task
+- 모바일(375px) 인증 사용자를 위한 키보드 조작 가능한 내비게이션 메뉴 추가
+- 업로드/변환 진행 상태의 progressbar 및 live-region 시맨틱 추가
+- 장식용 SVG를 assistive technology에서 숨김
+
+## Files Modified
+1. `apps/web/src/components/PageLayout.tsx` — MobileNav import 및 헤더에 배치, 데스크톱 nav에 aria-label 추가, 로고 SVG aria-hidden
+2. `apps/web/src/components/MobileNav.tsx` — **신규 파일**: 모바일 햄버거 메뉴 (키보드/Escape/포커스 트랩/aria-current)
+3. `apps/web/src/components/DropzoneUploader.tsx` — STATUS_LABEL 맵, live region(role=status, aria-live=polite), progressbar role + aria 속성, 모든 장식용 SVG aria-hidden
+4. `apps/web/src/components/MobileNav.test.tsx` — **신규 파일**: 14개 테스트 (키보드, 포커스 복원, aria-current, 포커스 트랩, Escape)
+5. `apps/web/src/components/DropzoneUploader.a11y.test.tsx` — **신규 파일**: 9개 테스트 (live region, SVG aria-hidden, progressbar 부재)
+6. `apps/web/src/app/board/board-page.test.tsx` — next/navigation mock에 usePathname 추가
+7. `apps/web/src/app/history/history-page.test.tsx` — next/navigation mock에 usePathname 추가
+
+## Implementation Details
+
+### MobileNav.tsx
+- 인증된 사용자에게만 렌더링 (`loading || !user` → null)
+- `usePathname`으로 현재 라우트 감지, `aria-current="page"` 설정
+- 트리거 버튼: `aria-expanded`, `aria-controls`, `aria-haspopup="menu"`, 토글 라벨
+- 패널: `role="menu"`, `aria-label`, Tab 트랩, Escape 닫기
+- 포커스 복원: 패널 닫힘 시 트리거로 포커스 복원 (`useEffect` + `wasOpenRef`)
+- 링크 클릭 시 패널 닫기 (`onClick={closePanel}`) — `react-hooks/set-state-in-effect` lint 규칙 회피
+
+### DropzoneUploader.tsx 접근성
+- `STATUS_LABEL: Record<UploadStatus, string>` — 8개 상태(idle/uploading/queued/processing/completed/failed/expired/deleted) 한국어 라벨
+- Live region: `<div role="status" aria-live="polite" className="sr-only">` — 상태 전환 시 스크린 리더에 알림
+- Progressbar: `role="progressbar"`, `aria-valuemin={0}`, `aria-valuemax={100}`, `aria-valuenow={progress}`, `aria-valuetext` — uploading/queued/processing 상태
+- 장식용 SVG: 모든 SVG에 `aria-hidden="true"` 추가 (idle/uploading/queued/completed/failed 상태)
+
+## Verification Results
+
+### Unit Tests
+- MobileNav.test.tsx: 14/14 PASS
+- DropzoneUploader.a11y.test.tsx: 9/9 PASS
+- 전체 웹 테스트: 126/126 PASS (11 test files)
+
+### Lint / Typecheck / Build
+- `pnpm --filter web lint`: clean (0 errors)
+- `pnpm --filter web typecheck`: clean (0 errors)
+- `pnpm --filter web build`: success (12/12 static pages generated)
+
+### Browser QA (Playwright, headless Chromium)
+| Viewport | Mobile Nav Trigger | Live Region | SVGs (aria-hidden/total) | Progressbar (idle) | Desktop Nav |
+|---|---|---|---|---|---|
+| 375x812 | hidden (anonymous) | present | 2/6 | 0 | hidden |
+| 768x1024 | hidden (anonymous) | present | 2/6 | 0 | visible |
+| 1280x800 | hidden (anonymous) | present | 2/6 | 0 | visible |
+
+- 익명 사용자에서 모바일 내비게이션 트리거가 보이지 않는 것은 정상 동작 (인증 필요)
+- 6개 SVG 중 2개 aria-hidden: PageLayout 로고 + DropzoneUploader idle 아이콘
+- 나머지 4개 SVG는 홈페이지 피처 섹션 아이콘 (T7 범위 밖)
+- 인증된 사용자의 모바일 내비게이션 동작은 단위 테스트(MobileNav.test.tsx 14/14)로 검증
+
+### Screenshots
+- `mobile-375-home-anonymous.png`
+- `tablet-768-home-anonymous.png`
+- `desktop-1280-home-anonymous.png`
+- `browser-qa-results.json`
+
+## Backups
+- `history/file-backups/PageLayout.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/AuthNav.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/DropzoneUploader.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/board-page.test.tsx_20260712_180423_win32_U-N-00658`
+- `history/file-backups/history-page.test.tsx_20260712_180423_win32_U-N-00658`
+
+## Independent Verification (2026-07-12)
+
+| T7 acceptance | Result | Evidence |
+|---|---|---|
+| 375px 인증 사용자가 홈/이력/게시판에 접근 | PASS | `MobileNav.tsx`의 인증 조건부 렌더링 및 3개 링크; `MobileNav.test.tsx` 14/14 통과 |
+| 익명 사용자 모바일 메뉴 비노출 | PASS | `loading || !user` early return; 익명 렌더 테스트 통과 |
+| Enter/click, Escape, Tab/Shift+Tab 및 포커스 복귀 | PASS | 트리거 토글, Escape close, focus restore effect, panel Tab trap; 관련 테스트 통과 |
+| 업로드/변환 progressbar | PASS | uploading/queued/processing에 `role=progressbar`, min=0, max=100, now, valuetext 확인 |
+| 상태 변경 polite live region | PASS | `role=status`, `aria-live=polite`, `sr-only` 요소 확인 |
+| 장식 SVG AT 비노출 | PASS | T7 대상 SVG에 `aria-hidden=true`; 접근성 테스트 통과 |
+| Next 16 navigation 관례 | PASS | `usePathname` 공식 설치 문서 확인; Client Component에서 사용 |
+| 지정 검증 명령 | PASS | 집중 테스트 2개 파일, 23/23 통과; web lint/typecheck 통과; 대상 TSX LSP 진단 0건 |
+
+### Independent conclusion
+
+T7 범위에서 재현 가능한 결함을 확인하지 못했으므로 코드 및 테스트 파일은 변경하지 않았다. 인증 상태의 실제 브라우저 캡처는 이번 검증에서 추가하지 않았고, 인증/키보드 동작은 RTL/user-event 테스트로 확인했다. 기존 작업 트리의 다른 변경은 보존했다.
+
+## Defect correction and final verification (2026-07-12)
+
+- 결함 1 수정: `MobileNav.tsx`의 `role="menu"`/`role="menuitem"`을 제거했다. 기존 구현은 Tab 트랩 disclosure였으므로 ARIA menu 키보드 모델과 불일치했다. `aria-expanded`, `aria-controls`, Escape 포커스 복귀, 링크 `aria-current`는 유지했다.
+- 결함 2 수정: `DropzoneUploader.a11y.test.tsx`가 실제 drop callback을 구동하도록 mock을 보강하고, uploading progressbar의 `aria-valuemin/max/now/valuetext` 회귀 검증을 추가했다.
+
+| T7 acceptance | Result | Final evidence |
+|---|---|---|
+| 375px 인증 사용자 홈/이력/게시판 접근 | PASS | `MobileNav.test.tsx` 14 tests passed; auth-only render and three links |
+| 익명 사용자 메뉴 비노출 | PASS | `loading || !user` early return and anonymous test |
+| Enter/Tab/Shift+Tab/Escape 및 트리거 포커스 복귀 | PASS | 14 MobileNav tests passed; disclosure semantics now match behavior |
+| 업로드/변환 progressbar min/max/now/valuetext | PASS | live uploading regression test plus existing queued/processing flow coverage |
+| 상태 변경 polite live region | PASS | `role=status` + `aria-live=polite` tests passed |
+| 장식 SVG `aria-hidden` | PASS | SVG accessibility test passed |
+| Next 16 `usePathname` Client Component usage | PASS | installed Next docs checked and source boundary is client |
+| 지정 검증 | PASS | 2 files, 24/24 tests; web lint success; web typecheck success; 2 changed TSX files diagnostics clean |
+
+최종적으로 T7 범위에서 확인된 두 결함을 최소 수정했으며, T8/T9·Firebase Auth emulator·deployment·dependency는 변경하지 않았다. 실제 브라우저 인증 세션 캡처는 환경 제약상 추가하지 않았고, RTL 키보드/상태 경로 검증으로 대체했다.
+
+최종 테스트 정합화로 `MobileNav.test.tsx`의 이전 `aria-haspopup="menu"` 단정을 제거했으며, 구현과 테스트가 모두 disclosure semantics를 반영한다. 최종 명령 결과는 집중 테스트 24/24 통과, web lint 성공, web typecheck 성공이다.
+
+## T7 audit follow-up (2026-07-12)
+
+- `MobileNav.test.tsx`에 실제 `userEvent.keyboard("{Enter}")` 입력으로 패널이 열리고 trigger의 `aria-expanded="true"`가 되는 회귀 테스트를 추가했다.
+- 최신 지정 테스트: `pnpm --filter web test -- src/components/MobileNav.test.tsx src/components/DropzoneUploader.a11y.test.tsx` — **25/25 PASS**.
+- 최신 정적 검증: `pnpm --filter web lint` — **PASS**; `pnpm --filter web typecheck` — **PASS**.
+- ARIA 최종 검색: `MobileNav.tsx` 및 관련 테스트에 `role="menu"`, `role="menuitem"`, `aria-haspopup="menu"` **미검출**.
+- 실제 Playwright headless Chromium `375x812` 캡처를 `.omo/evidence/task-7-browser/anonymous-home-375.png`에 생성했다.
+- 현재 저장소에는 Playwright Node harness/config 또는 `useAuth` runtime init-script fixture가 없어 authenticated browser state를 안전하게 주입할 수 없다. Firebase 설정·credential·token은 변경하거나 사용하지 않았다. authenticated 링크 visibility와 Enter/Tab/Escape/focus-return은 runtime auth mock RTL 테스트로 검증했으며, authenticated browser capture 미생성은 환경 제한으로 기록한다.
+
+| Acceptance | Result | Evidence |
+|---|---|---|
+| 375px 인증 사용자의 홈/변환 이력/게시판 링크 | PASS (runtime mock); browser capture limitation recorded | `MobileNav.test.tsx` auth render + three links |
+| Enter trigger 조작 후 `aria-expanded=true` | PASS | new `userEvent.keyboard("{Enter}")` test |
+| Tab/Shift+Tab/Escape 및 trigger focus 복귀 | PASS (runtime mock); authenticated browser capture unavailable | existing keyboard/focus tests |
+| 익명 375px 실제 브라우저 메뉴 비노출 | PASS | fresh Chromium screenshot |
+| progressbar/live region/SVG semantics | PASS | dynamic `DropzoneUploader.a11y.test.tsx` coverage in 25-test run |

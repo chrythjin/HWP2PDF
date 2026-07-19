@@ -1,0 +1,865 @@
+import { render, screen, waitFor, act, fireEvent, cleanup, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import type { User } from "firebase/auth";
+import { AuthProvider } from "@/auth/AuthProvider";
+import HistoryPage from "./page";
+
+// ---------------------------------------------------------------------------
+// Mock firebase/auth and @/lib/firebase so AuthProvider works in tests.
+// ---------------------------------------------------------------------------
+
+const mockUser: User = {
+  uid: "test-uid",
+  email: "test@example.com",
+  getIdToken: vi.fn().mockResolvedValue("history-id-token"),
+} as unknown as User;
+
+let authStateCallback: ((user: User | null) => void) | null = null;
+
+vi.mock("firebase/auth", () => ({
+  onAuthStateChanged: vi.fn((_auth: unknown, cb: (user: User | null) => void) => {
+    authStateCallback = cb;
+    return () => {
+      authStateCallback = null;
+    };
+  }),
+  signInWithEmailAndPassword: vi.fn(),
+  createUserWithEmailAndPassword: vi.fn(),
+  signOut: vi.fn(),
+  getAuth: vi.fn(() => ({})),
+}));
+
+vi.mock("firebase/app", () => ({
+  initializeApp: vi.fn(() => ({})),
+  getApps: vi.fn(() => [{}]),
+  getApp: vi.fn(() => ({})),
+}));
+
+// Mock next/navigation useRouter so redirect logic doesn't crash in jsdom.
+const mockPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush, replace: mockPush, refresh: mockPush }),
+  usePathname: vi.fn(() => "/history"),
+}));
+
+// ---------------------------------------------------------------------------
+// Mock URL.createObjectURL / revokeObjectURL / anchor click so the T2
+// download helper's Blob/Object URL path works under jsdom.
+// ---------------------------------------------------------------------------
+
+let originalCreateObjectURL: typeof URL.createObjectURL;
+let originalRevokeObjectURL: typeof URL.revokeObjectURL;
+let originalCreateElement: typeof document.createElement;
+let anchorClick: ReturnType<typeof vi.fn>;
+
+// ---------------------------------------------------------------------------
+// Fetch mock — controls /v1/me/jobs list, DELETE, and download responses.
+// ---------------------------------------------------------------------------
+
+const originalFetch = globalThis.fetch;
+
+const HISTORY_DOWNLOAD_URL = "http://localhost:8080/v1/jobs/history-job-001/download";
+
+function mockFetchJobs(jobs: unknown[]) {
+  (globalThis.fetch as Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes("/v1/me/jobs") && (!init?.method || init.method === "GET")) {
+      return new Response(JSON.stringify(jobs), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (u.includes("/v1/me/jobs/") && init?.method === "DELETE") {
+      return new Response(JSON.stringify({ ok: true, jobId: "job-1", status: "deleted" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  });
+}
+
+function mockFetchJobsWithDownload(jobs: unknown[]) {
+  (globalThis.fetch as Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes("/v1/me/jobs") && (!init?.method || init.method === "GET")) {
+      return new Response(JSON.stringify(jobs), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (u.includes("/v1/me/jobs/") && init?.method === "DELETE") {
+      return new Response(JSON.stringify({ ok: true, jobId: "job-1", status: "deleted" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (u.includes("/download") && (!init?.method || init.method === "GET")) {
+      return new Response(new Blob(["%PDF-1.4"], { type: "application/pdf" }), {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  });
+}
+
+function renderHistory() {
+  return render(
+    <AuthProvider>
+      <HistoryPage />
+    </AuthProvider>,
+  );
+}
+
+describe("HistoryPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authStateCallback = null;
+    globalThis.fetch = vi.fn();
+    mockPush.mockReset();
+
+    originalCreateObjectURL = URL.createObjectURL;
+    originalRevokeObjectURL = URL.revokeObjectURL;
+    originalCreateElement = document.createElement.bind(document);
+
+    URL.createObjectURL = vi.fn(() => "blob:download-url");
+    URL.revokeObjectURL = vi.fn();
+    anchorClick = vi.fn();
+
+    vi.spyOn(document.body, "appendChild");
+    vi.spyOn(document.body, "removeChild");
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === "a") {
+        Object.defineProperty(element, "click", {
+          configurable: true,
+          value: anchorClick,
+        });
+      }
+      return element;
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.fetch = originalFetch;
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+    vi.restoreAllMocks();
+  });
+
+  // ---- Unauthenticated state shows login prompt ----
+  it("shows login prompt when unauthenticated", () => {
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(null);
+    });
+
+    expect(screen.getByTestId("history-login-prompt")).toBeInTheDocument();
+    // The login prompt contains a "로그인" link (the header AuthNav also has one).
+    const prompt = screen.getByTestId("history-login-prompt");
+    expect(within(prompt).getByText("로그인")).toBeInTheDocument();
+  });
+
+  // ---- Authenticated: renders mocked jobs ----
+  it("renders the authenticated user's jobs after fetch", async () => {
+    mockFetchJobs([
+      {
+        jobId: "job-1",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    ]);
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("job-1")).toBeInTheDocument();
+    });
+  });
+
+  // ---- Expired download label appears ----
+  it("shows expired download label when downloadExpiresAt is in the past", async () => {
+    mockFetchJobs([
+      {
+        jobId: "job-expired",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: "2020-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("job-expired")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("download-unavailable-label-job-expired")).toBeInTheDocument();
+  });
+
+  // ---- Authenticated download sends exact URL and Bearer header ----
+  it("sends authenticated download with exact URL and Authorization Bearer header", async () => {
+    mockFetchJobsWithDownload([
+      {
+        jobId: "history-job-001",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        downloadUrl: HISTORY_DOWNLOAD_URL,
+      },
+    ]);
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("history-job-001")).toBeInTheDocument();
+    });
+
+    const downloadButton = screen.getByTestId("download-button-history-job-001");
+    await act(async () => {
+      fireEvent.click(downloadButton);
+      // Flush the async download: getIdToken -> fetch -> blob -> anchor click.
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Find the download fetch call (GET to /download endpoint).
+    const calls = (globalThis.fetch as Mock).mock.calls;
+    const downloadCall = calls.find(
+      ([url, init]) =>
+        String(url).includes("/download") && (!init?.method || init.method === "GET"),
+    );
+
+    expect(downloadCall).toBeDefined();
+    expect(String(downloadCall![0])).toBe(HISTORY_DOWNLOAD_URL);
+
+    const init = downloadCall![1] as RequestInit;
+    const headers = init.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer history-id-token");
+
+    // The T2 helper should have triggered the browser download via Blob URL.
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- Expired job does not call fetch for download ----
+  it("does not call fetch when downloading an expired job", async () => {
+    mockFetchJobs([
+      {
+        jobId: "history-job-001",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: "2020-01-01T00:00:00.000Z",
+        downloadUrl: HISTORY_DOWNLOAD_URL,
+      },
+    ]);
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("history-job-001")).toBeInTheDocument();
+    });
+
+    // Expired label is shown, no download button.
+    expect(screen.getByTestId("download-unavailable-label-history-job-001")).toBeInTheDocument();
+    expect(screen.queryByTestId("download-button-history-job-001")).not.toBeInTheDocument();
+
+    // No download fetch call should have been made (only the initial /v1/me/jobs GET).
+    const calls = (globalThis.fetch as Mock).mock.calls;
+    const downloadCall = calls.find(
+      ([url, init]) =>
+        String(url).includes("/download") && (!init?.method || init.method === "GET"),
+    );
+    expect(downloadCall).toBeUndefined();
+  });
+
+  // ---- Delete confirmation calls API with Authorization ----
+  it("calls DELETE with Authorization header after confirmation", async () => {
+    // window.confirm stub
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    mockFetchJobs([
+      {
+        jobId: "job-1",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    ]);
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("job-1")).toBeInTheDocument();
+    });
+
+    const deleteButton = screen.getByTestId("delete-button-job-1");
+    await act(async () => {
+      fireEvent.click(deleteButton);
+      // Flush the async handleDelete: getIdToken -> fetch -> state update.
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    expect(confirmSpy).toHaveBeenCalled();
+
+    // Find the DELETE fetch call.
+    const calls = (globalThis.fetch as Mock).mock.calls;
+    const deleteCall = calls.find(
+      ([url, init]) =>
+        String(url).includes("/v1/me/jobs/") && init?.method === "DELETE",
+    );
+
+    expect(deleteCall).toBeDefined();
+    const init = deleteCall![1] as RequestInit;
+    const headers = init.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer history-id-token");
+
+    confirmSpy.mockRestore();
+  });
+
+  // ---- Delete disabled state renders correctly ----
+  it("disables the delete button and shows 삭제 중 while deletion is in progress", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    // Use a delayed DELETE response so the button stays disabled briefly.
+    let resolveDelete: ((value: Response) => void) | null = null;
+    const deletePromise = new Promise<Response>((resolve) => {
+      resolveDelete = resolve;
+    });
+
+    (globalThis.fetch as Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/v1/me/jobs") && (!init?.method || init.method === "GET")) {
+        return new Response(
+          JSON.stringify([
+            {
+              jobId: "job-1",
+              status: "completed",
+              createdAt: "2026-06-20T10:00:00.000Z",
+              downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (u.includes("/v1/me/jobs/") && init?.method === "DELETE") {
+        return deletePromise;
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("job-1")).toBeInTheDocument();
+    });
+
+    const deleteButton = screen.getByTestId("delete-button-job-1") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(deleteButton);
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // While deletion is in-flight, the button shows "삭제 중..." and is disabled.
+    expect(deleteButton).toBeDisabled();
+    expect(deleteButton.textContent).toContain("삭제 중...");
+
+    // Resolve the DELETE — the row should disappear.
+    await act(async () => {
+      resolveDelete!(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // After successful delete, the row is removed.
+    await waitFor(() => {
+      expect(screen.queryByTestId("delete-button-job-1")).not.toBeInTheDocument();
+    });
+  });
+
+  // ---- Deleted row disappears after success ----
+  it("removes the deleted row from the list after successful delete", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    mockFetchJobs([
+      {
+        jobId: "job-1",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+      {
+        jobId: "job-2",
+        status: "completed",
+        createdAt: "2026-06-21T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    ]);
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("job-1")).toBeInTheDocument();
+      expect(screen.getByText("job-2")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("delete-button-job-1"));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("job-1")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("job-2")).toBeInTheDocument();
+  });
+
+  // ---- Download failure (401/403/non-OK) shows safe error text ----
+  it.each([
+    [401, "인증이 필요합니다."],
+    [403, "다운로드 권한이 없습니다."],
+    [500, "PDF 다운로드에 실패했습니다."],
+  ])(
+    "shows safe deterministic error text when download returns HTTP %i",
+    async (status, message) => {
+      (globalThis.fetch as Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+        const u = String(url);
+        if (u.includes("/v1/me/jobs") && (!init?.method || init.method === "GET")) {
+          return new Response(
+            JSON.stringify([
+              {
+                jobId: "history-job-001",
+                status: "completed",
+                createdAt: "2026-06-20T10:00:00.000Z",
+                downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+                downloadUrl: HISTORY_DOWNLOAD_URL,
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (u.includes("/download") && (!init?.method || init.method === "GET")) {
+          return new Response("error", { status });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      renderHistory();
+
+      act(() => {
+        authStateCallback?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("history-job-001")).toBeInTheDocument();
+      });
+
+      const downloadButton = screen.getByTestId("download-button-history-job-001");
+      await act(async () => {
+        fireEvent.click(downloadButton);
+        await new Promise((r) => setTimeout(r, 50));
+      });
+
+      const errorEl = screen.getByTestId("download-error-history-job-001");
+      expect(errorEl).toBeInTheDocument();
+      expect(errorEl.textContent).toBe(message);
+      expect(errorEl).toHaveAttribute("role", "alert");
+
+      // No Blob download should have been triggered on failure.
+      expect(URL.createObjectURL).not.toHaveBeenCalled();
+    },
+  );
+
+  // ---- 401/403 graceful handling for job list ----
+  it("shows login prompt when API returns 401", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      return new Response(JSON.stringify({ error: { code: "unauthorized", message: "인증이 필요합니다." } }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-auth-error")).toBeInTheDocument();
+    });
+  });
+
+  it("shows forbidden message when API returns 403", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      return new Response(JSON.stringify({ error: { code: "forbidden", message: "접근 권한이 없습니다." } }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-auth-error")).toBeInTheDocument();
+    });
+  });
+
+  // ---- HTTP 500 shows error state with retry, not empty list ----
+  it("shows error state with retry button when API returns 500", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      return new Response(JSON.stringify({ error: { code: "internal", message: "서버 오류" } }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeInTheDocument();
+    });
+
+    // Error state must NOT show empty list message
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+    // Error state must have a retry button
+    expect(screen.getByTestId("history-retry-button")).toBeInTheDocument();
+  });
+
+  // ---- Network error (fetch throws) shows error state with retry ----
+  it("shows error state with retry button when fetch throws (network error)", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+    expect(screen.getByTestId("history-retry-button")).toBeInTheDocument();
+  });
+
+  // ---- True empty list shows empty state, not error ----
+  it("shows empty state when API returns empty array", async () => {
+    mockFetchJobs([]);
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-empty")).toBeInTheDocument();
+    });
+
+    // Empty state must NOT show error
+    expect(screen.queryByTestId("history-error")).not.toBeInTheDocument();
+  });
+
+  // ---- Stale list refresh failure keeps old data visible with warning ----
+  it("keeps stale list visible with warning when refresh fails", async () => {
+    let callCount = 0;
+    const initialJobs = [
+      {
+        jobId: "stale-job-1",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        downloadUrl: HISTORY_DOWNLOAD_URL,
+      },
+    ];
+
+    (globalThis.fetch as Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/v1/me/jobs") && (!init?.method || init.method === "GET")) {
+        callCount++;
+        if (callCount === 1) {
+          return new Response(JSON.stringify(initialJobs), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        // Second call (refresh) fails
+        return new Response("Internal Server Error", { status: 500 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    // Wait for initial data
+    await waitFor(() => {
+      expect(screen.getByText("stale-job-1")).toBeInTheDocument();
+    });
+
+    // Click retry/refresh button
+    const retryButton = screen.getByTestId("history-refresh-button");
+    await act(async () => {
+      fireEvent.click(retryButton);
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Stale data must still be visible
+    expect(screen.getByText("stale-job-1")).toBeInTheDocument();
+    // A stale-warning must be visible
+    expect(screen.getByTestId("history-stale-warning")).toBeInTheDocument();
+  });
+
+  // ---- Retry from error restores data ----
+  it("retry button restores data after error", async () => {
+    let callCount = 0;
+    const jobs = [
+      {
+        jobId: "recovered-job-1",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    ];
+
+    (globalThis.fetch as Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/v1/me/jobs") && (!init?.method || init.method === "GET")) {
+        callCount++;
+        if (callCount === 1) {
+          return new Response("Internal Server Error", { status: 500 });
+        }
+        return new Response(JSON.stringify(jobs), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    // First, error state
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeInTheDocument();
+    });
+
+    // Click retry
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("history-retry-button"));
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Data should be restored
+    await waitFor(() => {
+      expect(screen.getByText("recovered-job-1")).toBeInTheDocument();
+    });
+
+    // Error state should be gone
+    expect(screen.queryByTestId("history-error")).not.toBeInTheDocument();
+  });
+
+  // ---- 401/403 must NOT show as generic empty ----
+  it("401 does not show as empty list", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      return new Response(JSON.stringify({ error: { code: "unauthorized" } }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-auth-error")).toBeInTheDocument();
+    });
+
+    // Must NOT show empty
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+  });
+
+  // ---- 200 with non-array JSON body shows error, NOT empty ----
+  it("shows error state (not empty) when API returns 200 with a non-array JSON body", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      return new Response(JSON.stringify({ error: { code: "internal", message: "서버 오류" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeInTheDocument();
+    });
+
+    // Must NOT show empty — a non-array 200 is a protocol error, not empty history
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+    // Must have a retry button
+    expect(screen.getByTestId("history-retry-button")).toBeInTheDocument();
+  });
+
+  // ---- 200 with malformed JSON body shows error, NOT empty ----
+  it("shows error state (not empty) when API returns 200 with malformed JSON body", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      return new Response("<<<not valid json>>>", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+    expect(screen.getByTestId("history-retry-button")).toBeInTheDocument();
+  });
+
+  // ---- 200 with null body shows error, NOT empty ----
+  it("shows error state (not empty) when API returns 200 with null body", async () => {
+    (globalThis.fetch as Mock).mockImplementation(async () => {
+      return new Response("null", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("history-error")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+  });
+
+  // ---- Stale data preserved when refresh returns 200 with non-array body ----
+  it("keeps stale list visible with warning when refresh returns 200 with non-array body", async () => {
+    let callCount = 0;
+    const initialJobs = [
+      {
+        jobId: "stale-job-non-array",
+        status: "completed",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        downloadExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        downloadUrl: HISTORY_DOWNLOAD_URL,
+      },
+    ];
+
+    (globalThis.fetch as Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/v1/me/jobs") && (!init?.method || init.method === "GET")) {
+        callCount++;
+        if (callCount === 1) {
+          return new Response(JSON.stringify(initialJobs), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        // Second call (refresh): 200 but non-array body
+        return new Response(JSON.stringify({ error: "unexpected" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    renderHistory();
+
+    act(() => {
+      authStateCallback?.(mockUser);
+    });
+
+    // Wait for initial data
+    await waitFor(() => {
+      expect(screen.getByText("stale-job-non-array")).toBeInTheDocument();
+    });
+
+    // Click refresh button
+    const retryButton = screen.getByTestId("history-refresh-button");
+    await act(async () => {
+      fireEvent.click(retryButton);
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Stale data must still be visible
+    expect(screen.getByText("stale-job-non-array")).toBeInTheDocument();
+    // A stale-warning must be visible
+    expect(screen.getByTestId("history-stale-warning")).toBeInTheDocument();
+    // Must NOT show empty
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+  });
+});

@@ -1,0 +1,7 @@
+# Learnings
+
+- 2026-07-12 T1: `JobStatusResponse`의 기존 `message`/`downloadExpiresAt`를 유지하면서 optional `errorCode`, `downloadAvailable`, `downloadUnavailableReason`을 추가하면 현재 API producer와 web consumer를 깨지 않고 T2/T3가 단계적으로 이행할 수 있다.
+- 2026-07-12 T1: 공개 오류는 readonly 코드 목록에서 union을 유도하고 `Record<Code, Detail>`로 한국어 메시지와 retryable/terminal 분류의 완전성을 컴파일 시점에 강제한다.
+- 2026-07-12 T1: 외부 unknown 오류/사유는 원문을 보존하지 않고 각각 `conversion_failed`/`result_unavailable`로 축약해야 경로, 명령, URL, 토큰, raw exception 누출을 막을 수 있다.
+- 2026-07-12 T1: agent-lsp daemon이 10초 내 시작되지 않아 Serena symbol overview와 범위 제한 소비자 검색을 blast-radius fallback으로 사용했다.
+- 2026-07-12 T1 correction: backward compatibility는 신규 필드를 단순 optional로 만드는 것보다 `legacy 둘 다 생략 | available true/reason 금지 | available false/reason 필수` union으로 표현해야 기존 producer를 허용하면서 신규 상태 모순을 컴파일 시점에 차단한다. Vitest는 `@ts-expect-error`를 검사하지 않으므로 패키지 `tsc` build가 타입 회귀의 RED/GREEN 증거다.

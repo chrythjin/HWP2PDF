@@ -6,9 +6,9 @@
       "work_id": "code-frontend-improvement-final-4d7852e3",
       "active_plan": "C:\\NEW PRG\\HWP2PDF\\.omo\\plans\\code-frontend-improvement-final.md",
       "plan_name": "code-frontend-improvement-final",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-07-12T02:47:58.014Z",
-      "updated_at": "2026-07-18T15:15:21.233Z",
+      "updated_at": "2026-07-19T05:30:09.154Z",
       "session_ids": [
         "opencode:ses_0ae47bb1cffeSljy9Fopuwro0b",
         "opencode:ses_0979f1ddbffedrnBF9XoibzqmM",
@@ -64,13 +64,15 @@
           "status": "running",
           "updated_at": "2026-07-16T01:52:26.054Z"
         }
-      }
+      },
+      "ended_at": "2026-07-19T05:30:09.153Z",
+      "elapsed_ms": 614531139
     }
   },
   "active_plan": "C:\\NEW PRG\\HWP2PDF\\.omo\\plans\\code-frontend-improvement-final.md",
   "started_at": "2026-07-12T02:47:58.014Z",
-  "status": "active",
-  "updated_at": "2026-07-18T15:15:21.233Z",
+  "status": "completed",
+  "updated_at": "2026-07-19T05:30:09.154Z",
   "session_ids": [
     "opencode:ses_0ae47bb1cffeSljy9Fopuwro0b",
     "opencode:ses_0979f1ddbffedrnBF9XoibzqmM",
@@ -127,5 +129,7 @@
       "updated_at": "2026-07-16T01:52:26.054Z"
     }
   },
-  "agent": "atlas"
+  "agent": "atlas",
+  "ended_at": "2026-07-19T05:30:09.153Z",
+  "elapsed_ms": 614531139
 }

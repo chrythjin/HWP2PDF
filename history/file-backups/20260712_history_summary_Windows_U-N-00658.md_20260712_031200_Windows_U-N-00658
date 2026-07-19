@@ -1,0 +1,27 @@
+# 2026-07-12 변경 이력
+
+## User Request
+
+종합 코드 리뷰 결과를 기준으로 수정 계획서를 만들고 개선을 진행한다.
+
+## Changes
+
+- 변환 오류 전파, Cloud Tasks 큐 실패 처리, GCS 워커 원본 재다운로드 및 크기 재검증.
+- GCS metadata, HWP OLE 시그니처, 게시글 PATCH 입력 검증 강화.
+- 회원 보존기간 분리, tombstone 소유권 보존, 작업·게시글 Firestore transaction 적용.
+- 프록시 신뢰/rate limit 키, Firestore 인덱스, HTML 언어, 임시파일 ignore 개선.
+- 관련 테스트 fixture, smoke 스크립트, 계획서와 세션 문서 갱신.
+
+## Before
+
+- 변환 실패가 워커 성공 응답으로 끝날 수 있었고 큐 등록 실패가 비동기 유실될 수 있었다.
+- Cloud Run 워커가 업로드 인스턴스 로컬 경로에 의존했으며 직접 업로드 신고 크기와 실제 객체가 불일치할 수 있었다.
+- PATCH 일부 필드, 보존기간, tombstone 인가, Firestore 동시성 및 프록시 IP 계약이 불완전했다.
+
+## After
+
+- 작업 상태와 워커 HTTP 의미, 큐 등록 결과, GCS 원본 실행 계약을 일관되게 만들었다.
+- 외부 입력과 파일 형식 경계를 서버에서 검증하고 실패 임시파일을 정리한다.
+- 데이터 전이를 transaction으로 보호하고 회원 이력·다운로드 보존기간을 분리했다.
+- 전체 404개 테스트, 전체 빌드, 웹 린트, OCR 및 로컬 HTTP QA를 완료했다.
+- GCP staging 검증과 기존 추적 임시파일/lockfile 삭제는 별도 승인 작업으로 남겼다.

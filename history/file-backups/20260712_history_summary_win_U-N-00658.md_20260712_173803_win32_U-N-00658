@@ -1,0 +1,24 @@
+## User Request
+T3. 이력·업로드 UI가 오류·빈 상태·다운로드 상태를 정확히 표현 - 브라우저 QA 수행 및 firebase.ts Auth Emulator 연결 추가
+
+## Changes
+- pps/web/src/lib/firebase.ts: connectAuthEmulator import 추가 및 NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST 환경 변수 기반 emulator 연결 로직 추가
+- .omo/evidence/task-3-browser-qa.cjs: Playwright 브라우저 QA 스크립트 작성
+- .omo/evidence/task-3-screenshot-*.png: 8개 브라우저 QA 스크린샷
+- irebase.json: Auth Emulator 설정 임시 추가 (백업 후 복구 예정)
+
+## Before
+- firebase.ts가 connectAuthEmulator를 호출하지 않아 로컬 개발/테스트 환경에서 Firebase Auth Emulator를 사용할 수 없었음
+- T3 브라우저 QA 증거가 없었음
+
+## After
+- NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST 환경 변수 설정 시 자동으로 Auth Emulator에 연결
+- 11개 브라우저 QA 테스트 모두 PASS: 미인증, 로그인, API 500 오류, 재시도→성공, completed-but-unavailable, stale refresh, 401 auth-error
+- 99개 단위 테스트, typecheck, lint 모두 통과
+
+## T3 Correction (post-independent-verification)
+- Reverted firebase.ts to pre-T3 state (removed connectAuthEmulator import and emulator host branch)
+- Fixed malformed-JSON defect in history/page.tsx: 200 + non-array/malformed JSON now shows error/stale, not false empty
+- Added 4 regression tests for malformed 200 responses
+- Verified firebase.json is pre-existing untracked file, content restored to original
+- Final: 103/103 tests pass, typecheck/lint clean, browser QA 5/5 PASS

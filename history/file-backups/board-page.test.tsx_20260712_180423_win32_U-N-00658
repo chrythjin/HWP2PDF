@@ -1,0 +1,921 @@
+import { render, screen, waitFor, act, fireEvent, cleanup } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import type { User, IdTokenResult } from "firebase/auth";
+import { AuthProvider } from "@/auth/AuthProvider";
+import BoardListPage from "./page";
+import BoardDetailPage from "./[id]/page";
+import BoardWritePage from "./write/page";
+import BoardEditPage from "./[id]/edit/page";
+
+// ---------------------------------------------------------------------------
+// Mock firebase/auth and @/lib/firebase.
+//
+// fetchWithAuth uses `auth.currentUser` from @/lib/firebase, so we mock the
+// auth singleton to return our mockUser as currentUser. The AuthProvider
+// uses onAuthStateChanged from firebase/auth.
+// ---------------------------------------------------------------------------
+
+interface MockUserOptions {
+  uid?: string;
+  email?: string;
+  admin?: boolean;
+  boardModerator?: boolean;
+}
+
+function createMockUser(options: MockUserOptions = {}): User {
+  const uid = options.uid ?? "test-uid";
+  const claims: Record<string, unknown> = {};
+  if (options.admin) claims.admin = true;
+  if (options.boardModerator) claims.boardModerator = true;
+
+  const tokenResult = {
+    token: "mock-id-token",
+    claims: { uid, ...claims },
+    issuedAtTime: "",
+    expirationTime: "",
+    signInProvider: "password",
+    signInSecondFactor: null,
+  } as unknown as IdTokenResult;
+
+  return {
+    uid,
+    email: options.email ?? "test@example.com",
+    getIdToken: vi.fn().mockResolvedValue("mock-id-token"),
+    getIdTokenResult: vi.fn().mockResolvedValue(tokenResult),
+  } as unknown as User;
+}
+
+// Use vi.hoisted to create mutable state that survives vi.mock hoisting.
+const { authStateCallbackRef, mockCurrentUserRef } = vi.hoisted(() => ({
+  authStateCallbackRef: { current: null as ((user: User | null) => void) | null },
+  mockCurrentUserRef: { current: null as User | null },
+}));
+
+function setMockCurrentUser(user: User | null) {
+  mockCurrentUserRef.current = user;
+}
+
+vi.mock("firebase/auth", () => ({
+  onAuthStateChanged: vi.fn((_auth: unknown, cb: (user: User | null) => void) => {
+    authStateCallbackRef.current = cb;
+    return () => {
+      authStateCallbackRef.current = null;
+    };
+  }),
+  signInWithEmailAndPassword: vi.fn(),
+  createUserWithEmailAndPassword: vi.fn(),
+  signOut: vi.fn(),
+  getAuth: vi.fn(() => ({})),
+}));
+
+vi.mock("firebase/app", () => ({
+  initializeApp: vi.fn(() => ({})),
+  getApps: vi.fn(() => [{}]),
+  getApp: vi.fn(() => ({})),
+}));
+
+vi.mock("@/lib/firebase", () => {
+  const mockAuth = {
+    get currentUser() {
+      return mockCurrentUserRef.current;
+    },
+  };
+
+  return {
+    getFirebaseAuth: vi.fn(() => mockAuth),
+    auth: mockAuth,
+    isFirebaseConfigured: true,
+  };
+});
+
+// Mock next/navigation useRouter and useParams.
+const mockPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush, replace: mockPush, refresh: mockPush }),
+  useParams: vi.fn(() => ({ id: "post-1" })),
+  usePathname: vi.fn(() => "/board"),
+}));
+
+// ---------------------------------------------------------------------------
+// Fetch mock helpers.
+// ---------------------------------------------------------------------------
+
+const originalFetch = globalThis.fetch;
+
+function mockFetchResponse(url: string, status: number, body: unknown) {
+  (globalThis.fetch as Mock).mockImplementation(async (input: string | URL) => {
+    const u = String(input);
+    if (u.includes(url)) {
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  });
+}
+
+function mockFetchImplementation(handler: (url: string, _init?: RequestInit) => Response) {
+  (globalThis.fetch as Mock).mockImplementation(async (input: string | URL, init?: RequestInit) => {
+    return handler(String(input), init);
+  });
+}
+
+function renderWithAuth(ui: React.ReactElement) {
+  return render(<AuthProvider>{ui}</AuthProvider>);
+}
+
+describe("Board UI pages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authStateCallbackRef.current = null;
+    mockCurrentUserRef.current = null;
+    globalThis.fetch = vi.fn();
+    mockPush.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  // -----------------------------------------------------------------------
+  // Board list page
+  // -----------------------------------------------------------------------
+
+  describe("BoardListPage", () => {
+    it("shows login prompt when unauthenticated", () => {
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(null);
+      });
+
+      expect(screen.getByTestId("board-login-prompt")).toBeInTheDocument();
+    });
+
+    it("renders post list for authenticated member", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchImplementation((url) => {
+        if (url.includes("/v1/board/posts")) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "post-1",
+                  title: "First Post",
+                  category: "general",
+                  authorId: "user-1",
+                  authorName: "Test User",
+                  createdAt: "2026-06-20T10:00:00.000Z",
+                  updatedAt: "2026-06-20T10:00:00.000Z",
+                },
+              ],
+              meta: { total: 1, page: 1, pageSize: 20, totalPages: 1 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-post-row-post-1")).toBeInTheDocument();
+      });
+      expect(screen.getByText("First Post")).toBeInTheDocument();
+    });
+
+    it("shows write button for authenticated users", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts", 200, {
+        data: [],
+        meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-write-button")).toBeInTheDocument();
+      });
+    });
+
+    it("hides notice category filter for non-admin users", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts", 200, {
+        data: [],
+        meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-category-general")).toBeInTheDocument();
+      });
+
+      // Notice filter should NOT be present for non-admin.
+      expect(screen.queryByTestId("board-category-notice")).not.toBeInTheDocument();
+    });
+
+    it("shows notice category filter for admin users", async () => {
+      const mockUser = createMockUser({ uid: "admin-1", admin: true });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts", 200, {
+        data: [],
+        meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 },
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-category-notice")).toBeInTheDocument();
+      });
+    });
+
+    it("sends Authorization header in list fetch", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchImplementation((url) => {
+        if (url.includes("/v1/board/posts")) {
+          return new Response(
+            JSON.stringify({ data: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 1 } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      renderWithAuth(<BoardListPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(globalThis.fetch).toHaveBeenCalled();
+      });
+
+      const calls = (globalThis.fetch as Mock).mock.calls;
+      const listCall = calls.find(([url]) => String(url).includes("/v1/board/posts"));
+      expect(listCall).toBeDefined();
+
+      const init = listCall![1] as RequestInit;
+      const headers = init.headers as Headers;
+      expect(headers.get("Authorization")).toBe("Bearer mock-id-token");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Board write page
+  // -----------------------------------------------------------------------
+
+  describe("BoardWritePage", () => {
+    it("shows login prompt when unauthenticated", () => {
+      renderWithAuth(<BoardWritePage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(null);
+      });
+
+      expect(screen.getByTestId("board-write-login-prompt")).toBeInTheDocument();
+    });
+
+    it("renders form with title, body, category for authenticated member", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      renderWithAuth(<BoardWritePage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-write-form")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("board-write-title")).toBeInTheDocument();
+      expect(screen.getByTestId("board-write-body")).toBeInTheDocument();
+      expect(screen.getByTestId("board-write-category")).toBeInTheDocument();
+    });
+
+    it("hides notice option for non-admin members", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      renderWithAuth(<BoardWritePage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-write-category")).toBeInTheDocument();
+      });
+
+      const select = screen.getByTestId("board-write-category") as HTMLSelectElement;
+      const optionValues = Array.from(select.options).map((o) => o.value);
+      expect(optionValues).toContain("general");
+      expect(optionValues).toContain("qna");
+      expect(optionValues).not.toContain("notice");
+    });
+
+    it("shows notice option for admin users", async () => {
+      const mockUser = createMockUser({ uid: "admin-1", admin: true });
+      setMockCurrentUser(mockUser);
+
+      renderWithAuth(<BoardWritePage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-write-category")).toBeInTheDocument();
+      });
+
+      const select = screen.getByTestId("board-write-category") as HTMLSelectElement;
+      const optionValues = Array.from(select.options).map((o) => o.value);
+      expect(optionValues).toContain("notice");
+    });
+
+    it("does not have an author field in the form", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      renderWithAuth(<BoardWritePage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-write-form")).toBeInTheDocument();
+      });
+
+      // No input with testid containing "author".
+      expect(screen.queryByTestId("board-write-author")).not.toBeInTheDocument();
+    });
+
+    it("submits POST with title, body, category and Authorization", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchImplementation((url, init) => {
+        if (url.includes("/v1/board/posts") && init?.method === "POST") {
+          return new Response(
+            JSON.stringify({
+              id: "new-post-1",
+              title: "Test Title",
+              body: "Test Body",
+              category: "general",
+              authorId: "user-1",
+              authorName: "test@example.com",
+              createdAt: "2026-06-20T10:00:00.000Z",
+              updatedAt: "2026-06-20T10:00:00.000Z",
+            }),
+            { status: 201, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      renderWithAuth(<BoardWritePage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-write-title")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.change(screen.getByTestId("board-write-title"), {
+          target: { value: "Test Title" },
+        });
+        fireEvent.change(screen.getByTestId("board-write-body"), {
+          target: { value: "Test Body" },
+        });
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("board-write-submit"));
+      });
+
+      const calls = (globalThis.fetch as Mock).mock.calls;
+      const postCall = calls.find(
+        ([url, init]) =>
+          String(url).includes("/v1/board/posts") && init?.method === "POST",
+      );
+      expect(postCall).toBeDefined();
+
+      const init = postCall![1] as RequestInit;
+      const headers = init.headers as Headers;
+      expect(headers.get("Authorization")).toBe("Bearer mock-id-token");
+      expect(headers.get("Content-Type")).toBe("application/json");
+
+      const body = JSON.parse(init.body as string);
+      expect(body.title).toBe("Test Title");
+      expect(body.body).toBe("Test Body");
+      expect(body.category).toBe("general");
+      // Author fields must NOT be in the request body.
+      expect(body.authorId).toBeUndefined();
+      expect(body.authorName).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Board detail page
+  // -----------------------------------------------------------------------
+
+  describe("BoardDetailPage", () => {
+    it("shows login prompt when unauthenticated", () => {
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(null);
+      });
+
+      expect(screen.getByTestId("board-detail-login-prompt")).toBeInTheDocument();
+    });
+
+    it("renders post detail for authenticated member", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "Detail Title",
+        body: "Detail body content",
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-detail")).toBeInTheDocument();
+      });
+      expect(screen.getByText("Detail Title")).toBeInTheDocument();
+      expect(screen.getByTestId("board-detail-body")).toHaveTextContent("Detail body content");
+    });
+
+    it("shows edit/delete buttons for post owner", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "My Post",
+        body: "Body",
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-detail-actions")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("board-edit-button")).toBeInTheDocument();
+      expect(screen.getByTestId("board-delete-button")).toBeInTheDocument();
+    });
+
+    it("hides edit/delete buttons for non-owner non-admin non-moderator", async () => {
+      const mockUser = createMockUser({ uid: "user-other" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "Someone Else's Post",
+        body: "Body",
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-detail")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("board-detail-actions")).not.toBeInTheDocument();
+    });
+
+    it("shows edit/delete buttons for admin even if not owner", async () => {
+      const mockUser = createMockUser({ uid: "admin-1", admin: true });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "User's Post",
+        body: "Body",
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-detail-actions")).toBeInTheDocument();
+      });
+    });
+
+    it("shows edit/delete buttons for boardModerator even if not owner", async () => {
+      const mockUser = createMockUser({ uid: "mod-1", boardModerator: true });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "User's post",
+        body: "Body",
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-detail-actions")).toBeInTheDocument();
+      });
+    });
+
+    it("sends DELETE with Authorization after confirmation", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+      mockFetchImplementation((url, init) => {
+        if (url.includes("/v1/board/posts/post-1") && (!init?.method || init.method === "GET")) {
+          return new Response(
+            JSON.stringify({
+              id: "post-1",
+              title: "My Post",
+              body: "Body",
+              category: "general",
+              authorId: "user-1",
+              authorName: "Test User",
+              createdAt: "2026-06-20T10:00:00.000Z",
+              updatedAt: "2026-06-20T10:00:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("/v1/board/posts/post-1") && init?.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-delete-button")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("board-delete-button"));
+      });
+
+      expect(confirmSpy).toHaveBeenCalled();
+
+      const calls = (globalThis.fetch as Mock).mock.calls;
+      const deleteCall = calls.find(
+        ([url, init]) =>
+          String(url).includes("/v1/board/posts/post-1") && init?.method === "DELETE",
+      );
+      expect(deleteCall).toBeDefined();
+
+      const init = deleteCall![1] as RequestInit;
+      const headers = init.headers as Headers;
+      expect(headers.get("Authorization")).toBe("Bearer mock-id-token");
+
+      confirmSpy.mockRestore();
+    });
+
+    it("renders body as plain text (no dangerouslySetInnerHTML)", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      const maliciousBody = '<script>alert("xss")</script><b>bold</b>';
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "Test",
+        body: maliciousBody,
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardDetailPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-detail-body")).toBeInTheDocument();
+      });
+
+      // The body should be rendered as text, not as HTML.
+      const bodyEl = screen.getByTestId("board-detail-body");
+      expect(bodyEl).toHaveTextContent('<script>alert("xss")</script><b>bold</b>');
+      // No actual script element should be in the document.
+      expect(document.querySelector("script:not([src])")).toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Board edit page
+  // -----------------------------------------------------------------------
+
+  describe("BoardEditPage", () => {
+    it("shows login prompt when unauthenticated", () => {
+      renderWithAuth(<BoardEditPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(null);
+      });
+
+      expect(screen.getByTestId("board-edit-login-prompt")).toBeInTheDocument();
+    });
+
+    it("pre-fills form with existing post data", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "Original Title",
+        body: "Original body content",
+        category: "qna",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardEditPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-edit-form")).toBeInTheDocument();
+      });
+
+      const titleInput = screen.getByTestId("board-edit-title") as HTMLInputElement;
+      expect(titleInput.value).toBe("Original Title");
+
+      const bodyTextarea = screen.getByTestId("board-edit-body") as HTMLTextAreaElement;
+      expect(bodyTextarea.value).toBe("Original body content");
+
+      const categorySelect = screen.getByTestId("board-edit-category") as HTMLSelectElement;
+      expect(categorySelect.value).toBe("qna");
+    });
+
+    it("hides notice option for non-admin on edit form", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "Title",
+        body: "Body",
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardEditPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-edit-category")).toBeInTheDocument();
+      });
+
+      const select = screen.getByTestId("board-edit-category") as HTMLSelectElement;
+      const optionValues = Array.from(select.options).map((o) => o.value);
+      expect(optionValues).not.toContain("notice");
+    });
+
+    it("shows notice option for admin on edit form", async () => {
+      const mockUser = createMockUser({ uid: "admin-1", admin: true });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 200, {
+        id: "post-1",
+        title: "Title",
+        body: "Body",
+        category: "general",
+        authorId: "user-1",
+        authorName: "Test User",
+        createdAt: "2026-06-20T10:00:00.000Z",
+        updatedAt: "2026-06-20T10:00:00.000Z",
+      });
+
+      renderWithAuth(<BoardEditPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-edit-category")).toBeInTheDocument();
+      });
+
+      const select = screen.getByTestId("board-edit-category") as HTMLSelectElement;
+      const optionValues = Array.from(select.options).map((o) => o.value);
+      expect(optionValues).toContain("notice");
+    });
+
+    it("shows error for 403 (no edit permission)", async () => {
+      const mockUser = createMockUser({ uid: "user-other" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 403, {
+        error: { code: "forbidden", message: "접근 권한이 없습니다." },
+      });
+
+      renderWithAuth(<BoardEditPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-edit-error")).toBeInTheDocument();
+      });
+    });
+
+    it("shows error for 404 (post not found)", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchResponse("/v1/board/posts/post-1", 404, {
+        error: { code: "post_not_found", message: "게시글을 찾을 수 없습니다." },
+      });
+
+      renderWithAuth(<BoardEditPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-edit-error")).toBeInTheDocument();
+      });
+    });
+
+    it("submits PATCH with Authorization on save", async () => {
+      const mockUser = createMockUser({ uid: "user-1" });
+      setMockCurrentUser(mockUser);
+
+      mockFetchImplementation((url, init) => {
+        if (url.includes("/v1/board/posts/post-1") && (!init?.method || init.method === "GET")) {
+          return new Response(
+            JSON.stringify({
+              id: "post-1",
+              title: "Original Title",
+              body: "Original body",
+              category: "general",
+              authorId: "user-1",
+              authorName: "Test User",
+              createdAt: "2026-06-20T10:00:00.000Z",
+              updatedAt: "2026-06-20T10:00:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("/v1/board/posts/post-1") && init?.method === "PATCH") {
+          return new Response(
+            JSON.stringify({
+              id: "post-1",
+              title: "Updated Title",
+              body: "Updated body",
+              category: "general",
+              authorId: "user-1",
+              authorName: "Test User",
+              createdAt: "2026-06-20T10:00:00.000Z",
+              updatedAt: "2026-06-21T10:00:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      renderWithAuth(<BoardEditPage />);
+
+      act(() => {
+        authStateCallbackRef.current?.(mockUser);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-edit-title")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.change(screen.getByTestId("board-edit-title"), {
+          target: { value: "Updated Title" },
+        });
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("board-edit-submit"));
+      });
+
+      const calls = (globalThis.fetch as Mock).mock.calls;
+      const patchCall = calls.find(
+        ([url, init]) =>
+          String(url).includes("/v1/board/posts/post-1") && init?.method === "PATCH",
+      );
+      expect(patchCall).toBeDefined();
+
+      const init = patchCall![1] as RequestInit;
+      const headers = init.headers as Headers;
+      expect(headers.get("Authorization")).toBe("Bearer mock-id-token");
+
+      const body = JSON.parse(init.body as string);
+      expect(body.title).toBe("Updated Title");
+      // Author fields must NOT be in the PATCH body.
+      expect(body.authorId).toBeUndefined();
+      expect(body.authorName).toBeUndefined();
+    });
+  });
+});

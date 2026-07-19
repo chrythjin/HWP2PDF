@@ -1,0 +1,627 @@
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import request from "supertest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { createApp } from "../app.js";
+import {
+  MemoryJobStore,
+  type JobRecord,
+  type CreateJobInput,
+  type UpdateJobPatch,
+  type ListJobsByUserOptions,
+  type UploadSessionRecord,
+} from "../services/job-store.js";
+import { setTokenVerifierForTesting } from "../middleware/auth.js";
+import { API_ROUTES } from "@hwp2pdf/shared";
+import type { Express } from "express";
+
+// ---------------------------------------------------------------------------
+// Tests for member job history and deletion API (Todo 7).
+//
+// Verifies:
+// - GET /v1/me/jobs requires auth (401 without token)
+// - GET /v1/me/jobs returns only the caller's non-deleted jobs, sorted desc
+// - GET /v1/me/jobs omits downloadUrl when download has expired
+// - GET /v1/me/jobs/:jobId requires auth
+// - GET /v1/me/jobs/:jobId returns 404 for not-found or other-user job
+// - GET /v1/me/jobs/:jobId returns 410 for deleted tombstone
+// - GET /v1/me/jobs/:jobId returns 200 with sanitized response for own job
+// - DELETE /v1/me/jobs/:jobId requires auth
+// - DELETE /v1/me/jobs/:jobId returns 404 for not-found or other-user job
+// - DELETE /v1/me/jobs/:jobId returns 409 when job is processing
+// - DELETE /v1/me/jobs/:jobId returns 200 on success and strips paths
+// - DELETE /v1/me/jobs/:jobId is idempotent (repeat delete returns 200)
+// - Deleted job is hidden from GET /v1/me/jobs list
+// - Tombstone has no downloadUrl/object paths
+// ---------------------------------------------------------------------------
+
+interface MockDecodedToken {
+  uid: string;
+  email?: string;
+  name?: string;
+  admin?: boolean;
+  boardModerator?: boolean;
+}
+
+const mockTokens: Record<string, MockDecodedToken> = {
+  "valid-user-token": {
+    uid: "user-123",
+    email: "user@example.com",
+    name: "Test User",
+  },
+  "valid-other-user-token": {
+    uid: "user-456",
+    email: "other@example.com",
+    name: "Other User",
+  },
+};
+
+function createMockVerifier(tokens: Record<string, MockDecodedToken>) {
+  return async (idToken: string): Promise<MockDecodedToken> => {
+    const decoded = tokens[idToken];
+    if (!decoded) {
+      const err = new Error("Firebase ID token has invalid signature");
+      (err as Error & { code?: string }).code = "auth/invalid-id-token";
+      throw err;
+    }
+    return decoded;
+  };
+}
+
+type OwnerAwareJobRecord = JobRecord & {
+  ownerType?: "user" | "anonymous";
+  userId?: string;
+  accessTokenHash?: string;
+};
+
+function makeJob(overrides: Partial<OwnerAwareJobRecord> = {}): OwnerAwareJobRecord {
+  const now = new Date().toISOString();
+  return {
+    jobId: "job-test-base",
+    originalFileName: "test.hwp",
+    sourcePath: "/tmp/uploads/test.hwp",
+    status: "completed",
+    progress: 100,
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+// Mock the conversion service to avoid spawning LibreOffice.
+vi.mock("../services/conversion-service.js", () => ({
+  convertJobToPdf: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock storage-service GCS functions to avoid real GCS calls.
+vi.mock("../services/storage-service.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/storage-service.js")>();
+  return {
+    ...actual,
+    shouldUseGcs: vi.fn(() => false),
+    persistOriginalFile: vi.fn(async () => undefined),
+    downloadOriginalFile: vi.fn(async () => undefined),
+    createOriginalUploadUrl: vi.fn(async () => undefined),
+    getProtectedDownloadUrl: vi.fn(async (job: JobRecord) => {
+      if (job.status !== "completed") return undefined;
+      return `http://localhost:8080/v1/jobs/${job.jobId}/download`;
+    }),
+    // deleteStoredJobFiles is real (local mode → fs.rm best-effort) but we
+    // spy on it to verify it was called.
+    deleteStoredJobFiles: vi.fn(actual.deleteStoredJobFiles),
+  };
+});
+
+// Use a fresh MemoryJobStore for each test by mocking the job-store module.
+// The real singleton persists across tests, which causes list endpoints to
+// see jobs from previous test cases. A fresh store per test isolates state.
+let currentStore: MemoryJobStore;
+
+vi.mock("../services/job-store.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/job-store.js")>();
+  return {
+    ...actual,
+    // Override the exported functions to use our per-test store instance.
+    createJob: (input: CreateJobInput) => currentStore.createJob(input),
+    getJob: (jobId: string) => currentStore.getJob(jobId),
+    updateJob: (jobId: string, patch: UpdateJobPatch) => currentStore.updateJob(jobId, patch),
+    getJobForUser: (jobId: string, userId: string) => currentStore.getJobForUser(jobId, userId),
+    getJobForAnonymous: (jobId: string, hash: string) => currentStore.getJobForAnonymous(jobId, hash),
+    listJobsByUser: (userId: string, opts?: ListJobsByUserOptions) =>
+      currentStore.listJobsByUser(userId, opts),
+    markJobDeleted: (jobId: string, deletedBy: string) => currentStore.markJobDeleted(jobId, deletedBy),
+    createUploadSession: (session: UploadSessionRecord) => currentStore.createUploadSession(session),
+    getUploadSession: (jobId: string) => currentStore.getUploadSession(jobId),
+    completeUploadSession: (jobId: string, updates?: Partial<UploadSessionRecord>) =>
+      currentStore.completeUploadSession(jobId, updates),
+    expireUploadSessions: (before?: Date) => currentStore.expireUploadSessions(before),
+  };
+});
+
+// Import after mock setup — these will resolve to the mocked versions.
+const { createJob, getJob } = await import("../services/job-store.js");
+
+describe("member job history and deletion API (Todo 7)", () => {
+  let app: Express;
+  let tempUploadDir: string;
+  let tempResultDir: string;
+
+  beforeEach(async () => {
+    setTokenVerifierForTesting(createMockVerifier(mockTokens));
+
+    tempUploadDir = await fs.mkdtemp(path.join(os.tmpdir(), "hwp2pdf-mem-"));
+    tempResultDir = await fs.mkdtemp(path.join(os.tmpdir(), "hwp2pdf-mem-res-"));
+
+    process.env.UPLOAD_DIR = tempUploadDir;
+    process.env.RESULT_DIR = tempResultDir;
+
+    // Fresh store for each test.
+    currentStore = new MemoryJobStore();
+
+    app = await createApp();
+  });
+
+  afterEach(async () => {
+    setTokenVerifierForTesting(null);
+    delete process.env.UPLOAD_DIR;
+    delete process.env.RESULT_DIR;
+    await fs.rm(tempUploadDir, { recursive: true, force: true });
+    await fs.rm(tempResultDir, { recursive: true, force: true });
+    vi.clearAllMocks();
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /v1/me/jobs — auth required
+  // -----------------------------------------------------------------------
+
+  describe("GET /v1/me/jobs — auth required", () => {
+    it("returns 401 without Authorization header", async () => {
+      const res = await request(app).get(API_ROUTES.ME_JOBS);
+      expect(res.status).toBe(401);
+    });
+
+    it("returns 401 with invalid token", async () => {
+      const res = await request(app)
+        .get(API_ROUTES.ME_JOBS)
+        .set("Authorization", "Bearer invalid-token");
+      expect(res.status).toBe(401);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /v1/me/jobs — list own jobs
+  // -----------------------------------------------------------------------
+
+  describe("GET /v1/me/jobs — list own jobs", () => {
+    it("returns 200 with only the caller's non-deleted jobs sorted by createdAt desc", async () => {
+      const baseTime = Date.now();
+
+      // user-123 jobs (should appear)
+      const jobA = makeJob({
+        jobId: "job-a",
+        ownerType: "user",
+        userId: "user-123",
+        createdAt: new Date(baseTime + 1000).toISOString(),
+        updatedAt: new Date(baseTime + 1000).toISOString(),
+      });
+      const jobB = makeJob({
+        jobId: "job-b",
+        ownerType: "user",
+        userId: "user-123",
+        createdAt: new Date(baseTime + 2000).toISOString(),
+        updatedAt: new Date(baseTime + 2000).toISOString(),
+      });
+
+      // user-456 job (should NOT appear)
+      const jobOther = makeJob({
+        jobId: "job-other",
+        ownerType: "user",
+        userId: "user-456",
+        createdAt: new Date(baseTime + 3000).toISOString(),
+        updatedAt: new Date(baseTime + 3000).toISOString(),
+      });
+
+      // anonymous job (should NOT appear)
+      const jobAnon = makeJob({
+        jobId: "job-anon",
+        ownerType: "anonymous",
+        accessTokenHash: "some-hash",
+        createdAt: new Date(baseTime + 4000).toISOString(),
+        updatedAt: new Date(baseTime + 4000).toISOString(),
+      });
+
+      // deleted user-123 job (should NOT appear)
+      const jobDeleted = makeJob({
+        jobId: "job-deleted",
+        ownerType: "user",
+        userId: "user-123",
+        status: "deleted",
+        deletedAt: new Date().toISOString(),
+        createdAt: new Date(baseTime + 5000).toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Create in order: jobA first, then jobB. Since createJob sets
+      // createdAt = now at insertion time, jobB gets a later timestamp and
+      // appears first in the desc-sorted list. We add small delays to ensure
+      // the timestamps are distinct.
+      for (const j of [jobA, jobB, jobOther, jobAnon, jobDeleted]) {
+        await createJob(j as CreateJobInput);
+        // Small delay to ensure distinct createdAt timestamps.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      const res = await request(app)
+        .get(API_ROUTES.ME_JOBS)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body).toHaveLength(2);
+      // Sorted by createdAt desc → jobB (created later) first, jobA second.
+      expect(res.body[0].jobId).toBe("job-b");
+      expect(res.body[1].jobId).toBe("job-a");
+    });
+
+    it("returns 200 with empty array when user has no jobs", async () => {
+      const res = await request(app)
+        .get(API_ROUTES.ME_JOBS)
+        .set("Authorization", "Bearer valid-other-user-token");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body).toHaveLength(0);
+    });
+
+    it("omits downloadUrl when download has expired", async () => {
+      const job = makeJob({
+        jobId: "job-expired-dl",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+        // Download expired but metadata still valid.
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+        downloadExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(API_ROUTES.ME_JOBS)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      // The job auto-expires in getJob/listJobsByUser; downloadUrl should be
+      // absent because the download deadline has passed.
+      expect(res.body[0].downloadUrl).toBeUndefined();
+    });
+
+    it("includes downloadUrl when download is still valid and job is completed", async () => {
+      const resultPath = path.join(tempResultDir, "with-dl.pdf");
+      await fs.writeFile(resultPath, "%PDF-1.4 fake");
+
+      const job = makeJob({
+        jobId: "job-with-dl",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+        resultPath,
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(API_ROUTES.ME_JOBS)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].downloadUrl).toBeDefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /v1/me/jobs/:jobId — auth required
+  // -----------------------------------------------------------------------
+
+  describe("GET /v1/me/jobs/:jobId — auth required", () => {
+    it("returns 401 without Authorization header", async () => {
+      const res = await request(app).get(`${API_ROUTES.ME_JOBS}/some-id`);
+      expect(res.status).toBe(401);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /v1/me/jobs/:jobId — not found / other user
+  // -----------------------------------------------------------------------
+
+  describe("GET /v1/me/jobs/:jobId — not found or other user", () => {
+    it("returns 404 for non-existent job", async () => {
+      const res = await request(app)
+        .get(`${API_ROUTES.ME_JOBS}/nonexistent-job`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 for another user's job", async () => {
+      const job = makeJob({
+        jobId: "job-other-detail",
+        ownerType: "user",
+        userId: "user-456",
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /v1/me/jobs/:jobId — deleted tombstone
+  // -----------------------------------------------------------------------
+
+  describe("GET /v1/me/jobs/:jobId — deleted tombstone", () => {
+    it("returns 410 for a deleted job owned by the caller", async () => {
+      const job = makeJob({
+        jobId: "job-deleted-detail",
+        ownerType: "user",
+        userId: "user-123",
+        status: "deleted",
+        deletedAt: new Date().toISOString(),
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(res.status).toBe(410);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /v1/me/jobs/:jobId — own job success
+  // -----------------------------------------------------------------------
+
+  describe("GET /v1/me/jobs/:jobId — own job", () => {
+    it("returns 200 with sanitized response", async () => {
+      const resultPath = path.join(tempResultDir, "detail-ok.pdf");
+      await fs.writeFile(resultPath, "%PDF-1.4 fake");
+
+      const job = makeJob({
+        jobId: "job-detail-ok",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+        resultPath,
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body.jobId).toBe(job.jobId);
+      expect(res.body.status).toBe("completed");
+      expect(res.body.downloadUrl).toBeDefined();
+    });
+
+    it("omits downloadUrl when download expired", async () => {
+      const job = makeJob({
+        jobId: "job-detail-expired-dl",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+        downloadExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .get(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body.downloadUrl).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // DELETE /v1/me/jobs/:jobId — auth required
+  // -----------------------------------------------------------------------
+
+  describe("DELETE /v1/me/jobs/:jobId — auth required", () => {
+    it("returns 401 without Authorization header", async () => {
+      const res = await request(app).delete(`${API_ROUTES.ME_JOBS}/some-id`);
+      expect(res.status).toBe(401);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // DELETE /v1/me/jobs/:jobId — not found / other user
+  // -----------------------------------------------------------------------
+
+  describe("DELETE /v1/me/jobs/:jobId — not found or other user", () => {
+    it("returns 404 for non-existent job", async () => {
+      const res = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/nonexistent-job`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 for another user's job", async () => {
+      const job = makeJob({
+        jobId: "job-other-delete",
+        ownerType: "user",
+        userId: "user-456",
+        status: "completed",
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // DELETE /v1/me/jobs/:jobId — processing conflict
+  // -----------------------------------------------------------------------
+
+  describe("DELETE /v1/me/jobs/:jobId — processing conflict", () => {
+    it("returns 409 when job is processing", async () => {
+      const job = makeJob({
+        jobId: "job-processing-delete",
+        ownerType: "user",
+        userId: "user-123",
+        status: "processing",
+        progress: 30,
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBeDefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // DELETE /v1/me/jobs/:jobId — success and idempotency
+  // -----------------------------------------------------------------------
+
+  describe("DELETE /v1/me/jobs/:jobId — success and idempotency", () => {
+    it("returns 200 on successful delete and stores a privacy-safe tombstone", async () => {
+      const resultPath = path.join(tempResultDir, "delete-ok.pdf");
+      await fs.writeFile(resultPath, "%PDF-1.4 fake");
+
+      const job = makeJob({
+        jobId: "job-delete-ok",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+        resultPath,
+        originalObjectPath: "originals/job-delete-ok/test.hwp",
+        resultObjectPath: "results/job-delete-ok/job-delete-ok.pdf",
+        downloadUrl: "https://signed-url.example.com/dl",
+      });
+      await createJob(job as CreateJobInput);
+
+      const res = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(res.status).toBe(200);
+
+      // Verify the tombstone in the store has stripped private metadata and paths.
+      const stored = await getJob(job.jobId);
+      expect(stored).toBeDefined();
+      expect(stored).toEqual(
+        expect.objectContaining({
+          jobId: job.jobId,
+          originalFileName: "[deleted]",
+          sourcePath: "[deleted]",
+          status: "deleted",
+          progress: 0,
+          deletedBy: "user-123",
+        }),
+      );
+      expect(stored!.status).toBe("deleted");
+      expect(stored!.downloadUrl).toBeUndefined();
+      expect(stored!.resultPath).toBeUndefined();
+      expect(stored!.resultObjectPath).toBeUndefined();
+      expect(stored!.originalObjectPath).toBeUndefined();
+      expect(stored!.ownerType).toBe("user");
+      expect(stored!.userId).toBe("user-123");
+      expect(stored!.accessTokenHash).toBeUndefined();
+      expect(stored!.downloadExpiresAt).toBeUndefined();
+      expect(stored!.metadataExpiresAt).toBeUndefined();
+      expect(stored!.message).toBeUndefined();
+      expect(stored!.deletedAt).toBeDefined();
+      expect(stored!.deletedBy).toBe("user-123");
+      expect(stored!.tombstoneUntil).toBeDefined();
+      expect(Object.keys(stored!).sort()).toEqual([
+        "createdAt",
+        "deletedAt",
+        "deletedBy",
+        "expiresAt",
+        "jobId",
+        "originalFileName",
+        "ownerType",
+        "progress",
+        "sourcePath",
+        "status",
+        "tombstoneUntil",
+        "updatedAt",
+        "userId",
+      ]);
+    });
+
+    it("is idempotent — repeat delete returns 200", async () => {
+      const job = makeJob({
+        jobId: "job-delete-idempotent",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+      });
+      await createJob(job as CreateJobInput);
+
+      // First delete.
+      const res1 = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(res1.status).toBe(200);
+
+      // Second delete — should return 200 (no-op, already deleted).
+      // getJobForUser returns null for deleted jobs, so the route sees
+      // "not found" and returns 200 idempotently.
+      const res2 = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(res2.status).toBe(200);
+    });
+
+    it("hides deleted job from GET /v1/me/jobs list", async () => {
+      const job1 = makeJob({
+        jobId: "job-list-before-delete",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+        createdAt: new Date(Date.now() + 1000).toISOString(),
+        updatedAt: new Date(Date.now() + 1000).toISOString(),
+      });
+      const job2 = makeJob({
+        jobId: "job-list-after-delete",
+        ownerType: "user",
+        userId: "user-123",
+        status: "completed",
+        createdAt: new Date(Date.now() + 2000).toISOString(),
+        updatedAt: new Date(Date.now() + 2000).toISOString(),
+      });
+      await createJob(job1 as CreateJobInput);
+      await createJob(job2 as CreateJobInput);
+
+      // Delete job1.
+      const delRes = await request(app)
+        .delete(`${API_ROUTES.ME_JOBS}/${job1.jobId}`)
+        .set("Authorization", "Bearer valid-user-token");
+      expect(delRes.status).toBe(200);
+
+      // List should only contain job2.
+      const listRes = await request(app)
+        .get(API_ROUTES.ME_JOBS)
+        .set("Authorization", "Bearer valid-user-token");
+
+      expect(listRes.status).toBe(200);
+      expect(listRes.body).toHaveLength(1);
+      expect(listRes.body[0].jobId).toBe("job-list-after-delete");
+    });
+  });
+});

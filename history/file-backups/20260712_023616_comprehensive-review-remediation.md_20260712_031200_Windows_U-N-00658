@@ -1,0 +1,41 @@
+# 종합 코드 리뷰 개선
+
+## 요청
+
+2026-07-12 종합 코드 리뷰에서 확인한 14개 문제를 실행 계획으로 구조화하고, 운영 장애 및 데이터 무결성 위험 순으로 개선한다.
+
+## 주요 변경
+
+- 변환 실패를 워커에 재전파하고 일시적 오류는 Cloud Tasks 재시도가 실제로 작업을 다시 claim할 수 있게 `queued` 상태로 복원했다.
+- 업로드 응답 전에 큐 등록 결과를 기다리고 실패 시 작업을 `failed`로 기록했다. 직접 업로드 세션도 성공 또는 큐 등록 실패 시 종결한다.
+- GCS 원본 경로와 원본 크기를 작업 계약에 보존하고, 워커가 실행 인스턴스의 임시 경로로 재다운로드하면서 크기를 재검증하도록 변경했다.
+- 직접 업로드 완료 시 GCS 객체 metadata를 검증하고 HWP v5 OLE 시그니처가 아닌 파일을 거부·정리한다.
+- 게시글 PATCH의 각 제공 필드를 독립 검증한다.
+- 작업 갱신·삭제와 게시글 수정·삭제를 Firestore transaction으로 보호하고, tombstone에는 인가에 필요한 최소 소유권만 남긴다.
+- 회원 다운로드 만료와 30일 메타데이터 만료를 분리했다.
+- 회원 이력 Firestore 쿼리에서 `status != deleted` 제약을 제거하고 필터·페이지 처리를 올바른 순서로 수행한다.
+- Cloud Run 단일 프록시 홉을 명시하고 rate limit 키를 `request.ip`에서 생성한다.
+- HTML 문서 언어를 `ko`로 수정하고 Firestore 복합 인덱스 선언 및 임시 산출물 ignore 규칙을 추가했다.
+- smoke fixture를 실제 OLE 헤더 형식으로 갱신했다.
+
+## 검증
+
+- `pnpm test`: 404개 통과.
+- `pnpm -r build`: shared, api, web 프로덕션 빌드 통과.
+- `pnpm -r --if-present lint`: 웹 ESLint 통과.
+- 후속 OCR 지적 반영 후 API 표적 테스트 42개 및 API TypeScript 빌드 통과.
+- 변경 핵심 파일 LSP 진단: 오류 없음.
+- `git diff --check`: 오류 없음.
+- `ocr review`: 14개 변경 파일 검토 완료. 상충·오탐 지적을 코드로 재검증했고, 유효한 업로드 세션 종결과 워커 원본 크기 재검증 누락을 반영했다.
+- 실제 로컬 HTTP QA:
+  - `GET /health` → 200.
+  - 잘못된 HWP 시그니처 업로드 → 422 `invalid_file_signature`.
+  - OLE 시그니처 HWP 업로드 → 202 `queued`.
+  - 토큰 없이 해당 작업 조회 → 401.
+  - QA 프로세스 종료와 포트 해제를 확인했다.
+
+## 남은 운영 검증
+
+- 실제 GCP staging에서 Cloud Tasks 재시도, 다른 Cloud Run 인스턴스의 GCS 원본 재다운로드, Firestore transaction 및 인덱스를 검증해야 한다.
+- 로컬 Windows 환경에는 LibreOffice가 없으므로 실제 HWP→PDF 성공 변환은 이번 로컬 QA 범위가 아니다.
+- 이미 Git에 추적 중인 `apps/api/tmp/uploads/*`와 `package-lock.json`은 삭제 승인이 필요한 기존 파일이므로 삭제하지 않았다. `.gitignore`는 신규 발생과 재추적을 방지한다.
