@@ -11,8 +11,17 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
     return;
   }
 
-  const message = error instanceof Error ? error.message : "Unknown error";
-  console.error(JSON.stringify({ level: "error", requestId: response.locals.requestId, message }));
+  // Log a safe diagnostic summary only. The raw error.message may include
+  // internal paths, stack traces, or GCS object paths — never log it raw.
+  // requestId lets operators correlate with the specific failing request
+  // without exposing internal details in the log payload itself.
+  const errorName = error instanceof Error ? error.name : typeof error;
+  console.error(JSON.stringify({
+    level: "error",
+    requestId: response.locals.requestId,
+    event: "unhandled_error",
+    errorName,
+  }));
   response.status(500).json({
     error: {
       code: "internal_error",

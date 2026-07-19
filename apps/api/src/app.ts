@@ -45,7 +45,11 @@ export async function createApp(options: { converterOnly?: boolean } = {}) {
         const path = request.path;
         // Skip rate limiting for health checks, job status polling, and
         // internal worker endpoints (Cloud Tasks calls should not be rate-limited).
-        return path === "/health" || path.startsWith("/v1/jobs/") || path.startsWith("/internal/");
+        // Download endpoint (/v1/jobs/:jobId/download) stays rate-limited to
+        // prevent authenticated download abuse.
+        if (path === "/health" || path.startsWith("/internal/")) return true;
+        if (path.startsWith("/v1/jobs/") && !path.endsWith("/download")) return true;
+        return false;
       },
       message: {
         error: {
