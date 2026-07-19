@@ -91,6 +91,43 @@ export interface RecoveredJobsPage {
 export interface ExpiredUploadSessionsPage {
   sessions: UploadSessionRecord[];
   nextCursor?: string;
+  cleanupDiagnostics: CleanupDiagnostics;
+}
+
+export interface CleanupDiagnostics {
+  completedOrStatus: number;
+  alreadyClaimed: number;
+  invalidExpiry: number;
+  expiryAfterCutoff: number;
+  identityMismatch: number;
+  accepted: number;
+}
+
+function emptyCleanupDiagnostics(): CleanupDiagnostics {
+  return {
+    completedOrStatus: 0,
+    alreadyClaimed: 0,
+    invalidExpiry: 0,
+    expiryAfterCutoff: 0,
+    identityMismatch: 0,
+    accepted: 0,
+  };
+}
+
+type CleanupDecision = Exclude<keyof CleanupDiagnostics, "accepted"> | { accepted: UploadSessionRecord };
+
+function classifyUploadCleanupCandidate(
+  current: UploadSessionRecord,
+  scanned: UploadSessionRecord,
+  cutoff: Date,
+): CleanupDecision {
+  if (current.completedAt || current.status === "completed") return "completedOrStatus";
+  if (current.cleanupClaimedAt) return "alreadyClaimed";
+  const expiresAt = Date.parse(current.expiresAt);
+  if (!Number.isFinite(expiresAt)) return "invalidExpiry";
+  if (expiresAt > cutoff.getTime()) return "expiryAfterCutoff";
+  if (!hasSameUploadCleanupIdentity(current, scanned)) return "identityMismatch";
+  return { accepted: current };
 }
 
 type MaintenanceMutationHook = (jobId: string) => void | Promise<void>;
@@ -447,17 +484,34 @@ export class MemoryJobStore implements JobStore {
 
   async expireUploadSessionsForCleanup(options: MaintenancePageOptions) {
     const cursor = parseMaintenanceCursor(options.cursor);
-    const candidates = Array.from(this.uploadSessions.values())
-      .filter((item) => !item.completedAt && item.status !== "completed" && !item.cleanupClaimedAt && Date.parse(item.expiresAt) <= options.cutoff.getTime())
+    const limit = Math.max(0, options.limit);
+    const scanned = Array.from(this.uploadSessions.values())
+      .filter((item) => item.expiresAt <= options.cutoff.toISOString())
       .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt) || a.jobId.localeCompare(b.jobId))
       .filter((item) => isAfterMaintenanceCursor(item.expiresAt, item.jobId, cursor))
-      .slice(0, Math.max(0, options.limit));
-    const sessions = candidates.map((item) => item.status === "expired"
-      ? item
-      : { ...item, status: "expired" as const, expiredAt: options.cutoff.toISOString() });
-    for (const item of sessions) this.uploadSessions.set(item.jobId, item);
+      .slice(0, limit + 1);
+    const candidates = scanned.slice(0, limit);
+    const sessions: UploadSessionRecord[] = [];
+    const cleanupDiagnostics = emptyCleanupDiagnostics();
+    for (const candidate of candidates) {
+      const outcome = classifyUploadCleanupCandidate(candidate, candidate, options.cutoff);
+      if (typeof outcome === "string") {
+        cleanupDiagnostics[outcome] += 1;
+        continue;
+      }
+      const expired = candidate.status === "expired"
+        ? candidate
+        : { ...candidate, status: "expired" as const, expiredAt: options.cutoff.toISOString() };
+      this.uploadSessions.set(expired.jobId, expired);
+      cleanupDiagnostics.accepted += 1;
+      sessions.push(expired);
+    }
     const last = candidates.at(-1);
-    return { sessions, nextCursor: candidates.length === options.limit && last ? maintenanceCursor(last.expiresAt, last.jobId) : undefined };
+    return {
+      sessions,
+      nextCursor: scanned.length > limit && last ? maintenanceCursor(last.expiresAt, last.jobId) : undefined,
+      cleanupDiagnostics,
+    };
   }
 
   async claimExpiredUploadObject(candidate: UploadSessionRecord) {
@@ -712,31 +766,37 @@ export class FirestoreJobStore implements JobStore {
       .orderBy(FieldPath.documentId(), "asc");
     const cursor = parseMaintenanceCursor(options.cursor);
     if (cursor) query = query.startAfter(...cursor);
-    const snapshot = await query.limit(Math.max(0, options.limit)).get();
+    const limit = Math.max(0, options.limit);
+    const snapshot = await query.limit(limit + 1).get();
+    const candidates = snapshot.docs.slice(0, limit);
     const sessions: UploadSessionRecord[] = [];
-    for (const doc of snapshot.docs) {
-      const expired = await this.firestore.runTransaction(async (transaction) => {
+    const cleanupDiagnostics = emptyCleanupDiagnostics();
+    for (const doc of candidates) {
+      const outcome = await this.firestore.runTransaction(async (transaction) => {
         const currentSnapshot = await transaction.get(doc.ref);
-        if (!currentSnapshot.exists) return null;
+        if (!currentSnapshot.exists) return "identityMismatch" as const;
         const current = currentSnapshot.data() as UploadSessionRecord;
         const scanned = doc.data() as UploadSessionRecord;
-        if (
-          current.completedAt
-          || current.status === "completed"
-          || current.cleanupClaimedAt
-          || Date.parse(current.expiresAt) > options.cutoff.getTime()
-          || !hasSameUploadCleanupIdentity(current, scanned)
-        ) return null;
-        if (current.status === "expired") return current;
+        const decision = classifyUploadCleanupCandidate(current, scanned, options.cutoff);
+        if (typeof decision === "string" || current.status === "expired") return decision;
         const value = { ...current, status: "expired" as const, expiredAt: options.cutoff.toISOString() };
         transaction.set(doc.ref, value);
-        return value;
+        return { accepted: value };
       });
-      if (expired) sessions.push(expired);
+      if (typeof outcome === "string") {
+        cleanupDiagnostics[outcome] += 1;
+      } else {
+        cleanupDiagnostics.accepted += 1;
+        sessions.push(outcome.accepted);
+      }
     }
-    const last = snapshot.docs.at(-1);
+    const last = candidates.at(-1);
     const lastSession = last?.data() as UploadSessionRecord | undefined;
-    return { sessions, nextCursor: snapshot.size === options.limit && last && lastSession ? maintenanceCursor(lastSession.expiresAt, last.id) : undefined };
+    return {
+      sessions,
+      nextCursor: snapshot.docs.length > limit && last && lastSession ? maintenanceCursor(lastSession.expiresAt, last.id) : undefined,
+      cleanupDiagnostics,
+    };
   }
 
   async claimExpiredUploadObject(candidate: UploadSessionRecord) {

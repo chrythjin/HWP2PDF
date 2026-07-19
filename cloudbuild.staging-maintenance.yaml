@@ -1,0 +1,13 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - apps/api/Dockerfile
+      - -t
+      - asia-northeast3-docker.pkg.dev/hwp2pdf-499911/hwp2pdf/hwp2pdf-api:staging-maintenance-20260717
+      - .
+options:
+  logging: CLOUD_LOGGING_ONLY
+images:
+  - asia-northeast3-docker.pkg.dev/hwp2pdf-499911/hwp2pdf/hwp2pdf-api:staging-maintenance-20260717
