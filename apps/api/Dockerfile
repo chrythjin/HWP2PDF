@@ -20,7 +20,7 @@ RUN pnpm --filter @hwp2pdf/shared build \
   && mkdir -p /prod/api \
   && cp -r /app/apps/api/dist /prod/api/ \
   && cp /app/apps/api/package.json /prod/api/package.json \
-  && cp -r /app/node_modules /prod/api/node_modules
+  && cp -rL /app/node_modules /prod/api/node_modules
 
 FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production
@@ -58,7 +58,7 @@ RUN apt-get update \
   && ls -la /app/.lo-profile || true \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 hwp2pdf \
-  && useradd --system --uid 1001 --gid hwp2pdf --create-home hwp2pdf \
+  && useradd --system --uid 1001 --gid 1001 --create-home hwp2pdf \
   && mkdir -p /tmp/hwp2pdf/uploads /tmp/hwp2pdf/results \
   && chown -R hwp2pdf:hwp2pdf /app /tmp/hwp2pdf \
   && echo "--- Final extension check ---" \
@@ -69,4 +69,3 @@ COPY --from=build --chown=hwp2pdf:hwp2pdf /prod/api ./
 USER hwp2pdf
 EXPOSE 8080
 CMD ["node", "dist/server.js"]
-
