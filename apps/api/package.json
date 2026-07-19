@@ -4,9 +4,6 @@
   "private": true,
   "type": "module",
   "main": "dist/server.js",
-  "publishConfig": {
-    "directory": "dist"
-  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
