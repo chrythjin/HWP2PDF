@@ -4,7 +4,7 @@ FROM node:20-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /app
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@8.15.1 --activate
 
 FROM base AS dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -17,11 +17,7 @@ COPY packages/shared packages/shared
 COPY apps/api apps/api
 RUN pnpm --filter @hwp2pdf/shared build \
   && pnpm --filter api build \
-  && mkdir -p /prod/api \
-  && cp -r /app/apps/api/dist /prod/api/ \
-  && cp /app/apps/api/package.json /prod/api/package.json \
-  && cp -r /app/packages/shared/dist /prod/api/node_modules/@hwp2pdf/shared \
-  && (cd /prod/api && pnpm install --prod --no-bin-links --ignore-scripts)
+  && pnpm --filter api deploy --prod --ignore-scripts /prod/api
 
 FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production
