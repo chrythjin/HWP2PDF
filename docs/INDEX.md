@@ -80,4 +80,15 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260630_185024_hwp2pdf-review-fixes.md` - consolidated final verification evidence for authenticated downloads, AuthProvider lint safety, and worker queued-claim review fixes.
 - `sessions/20260705_003400_configure-local-adsense-client.md` - configured local AdSense publisher client ID in environment variables to load AdSense script.
 - `sessions/20260706_122340_fix-cors-anonymous-token-header.md` - fixed CORS preflight header validation by explicitly allowing X-Job-Access-Token.
+- `sessions/20260712_023616_comprehensive-review-remediation.md` - comprehensive review covering public error/download contracts, UI state accuracy, transaction-safe maintenance, and frontend quality.
+- `sessions/20260712_124600_t2-api-public-status.md` - T2 API public status separation.
+- `sessions/20260712_131100_t2-tombstone-privacy-repair.md` - T2 tombstone privacy repair.
+- `sessions/20260712_165953_t4-transactional-maintenance.md` - T4 transaction-safe maintenance primitives.
+- `sessions/20260712_173803_t4-transaction-safety-correction.md` - T4 transaction safety correction.
+- `sessions/20260712_175500_t4-final-cleanup-claim.md` - T4 final cleanup claim.
+- `sessions/20260712_182753_task-7-mobile-nav-upload-a11y.md` - T7 mobile nav + upload a11y.
+- `sessions/20260712_184600_t7-mobile-navigation-accessibility.md` - T7 mobile navigation accessibility.
+- `sessions/20260712_195000_t8-board-history-accessibility.md` - T8 board and history accessibility.
+- `sessions/20260712_201308_t8-board-history-accessibility-delete-dialog.md` - T8 delete dialog.
+- `sessions/20260719_142417_t5-oidc-maintenance-iam-gate.md` - T5 OIDC maintenance endpoint + IAM gate resolution (correct Cloud Build SA: hwp2pdf-runner@hwp2pdf-499911.iam.gserviceaccount.com; Cloud Run hwp2pdf-maintenance deployed).
 
