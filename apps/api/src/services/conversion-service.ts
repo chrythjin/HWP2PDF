@@ -143,7 +143,17 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
       }
 
       const details = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").slice(0, 2000);
-      finish(() => reject(new Error(details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`)));
+      const diagMessage = details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`;
+      // 기존 conversion_failed 이벤트(convertJobToPdf catch)와 별도로,
+      // LibreOffice 프로세스 수준의 진단 정보를 기록한다.
+      console.error(JSON.stringify({
+        level: "error",
+        event: "libreoffice_exit_nonzero",
+        exitCode: code,
+        stdoutTail: stdout.trim().slice(-500),
+        stderrTail: stderr.trim().slice(-500),
+      }));
+      finish(() => reject(new Error(diagMessage)));
     });
   });
 

@@ -59,7 +59,7 @@ export default function Home() {
           </div>
           <div className="flex justify-center">
             <AdSenseAd
-              adSlot="hwp2pdf-top-banner"
+              adSlot="1321652658"
               adFormat="horizontal"
               style={{ minHeight: 90, width: "100%", maxWidth: 728 }}
             />
@@ -153,7 +153,7 @@ export default function Home() {
           </div>
           <div className="flex justify-center">
             <AdSenseAd
-              adSlot="hwp2pdf-faq-inline"
+              adSlot="2224239001"
               adFormat="rectangle"
               style={{ minHeight: 250, width: "100%", maxWidth: 300 }}
             />
