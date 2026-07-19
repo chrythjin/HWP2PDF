@@ -20,7 +20,7 @@ RUN pnpm --filter @hwp2pdf/shared build \
   && mkdir -p /prod/api \
   && cp -r /app/apps/api/dist /prod/api/ \
   && cp /app/apps/api/package.json /prod/api/package.json \
-  && cp -rL /app/apps/api/node_modules /prod/api/node_modules
+  && cp -r /app/node_modules /prod/api/node_modules
 
 FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production
