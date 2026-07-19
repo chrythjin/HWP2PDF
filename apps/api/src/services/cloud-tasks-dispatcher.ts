@@ -128,7 +128,8 @@ export function resetCloudTasksClientForTesting(): void {
  * Resolution order:
  *   1. INTERNAL_WORKER_URL env (explicit override).
  *   2. INTERNAL_API_URL env + /internal/workers/convert.
- *   3. Fallback: http://localhost:<port>/internal/workers/convert.
+ *   3. CLOUD_RUN_SERVICE_URLS env (Cloud Run injects the public service URL).
+ *   4. Fallback: http://localhost:<port>/internal/workers/convert.
  *
  * Reads process.env directly (not config) so tests can override at runtime.
  */
@@ -139,10 +140,25 @@ export function createInternalWorkerUrl(): string {
   }
 
   const apiUrl = process.env.INTERNAL_API_URL ?? config.internalApiUrl;
+  if (apiUrl) {
+    const normalized = apiUrl.replace(/\/$/, "");
+    return `${normalized}/internal/workers/convert`;
+  }
+
+  // Cloud Run injects CLOUD_RUN_SERVICE_URLS as a comma-separated list of
+  // the revision's public URLs. The first entry is the canonical HTTPS URL.
+  // Use it to construct the worker endpoint when no explicit env is set.
+  const cloudRunUrls = process.env.CLOUD_RUN_SERVICE_URLS;
+  if (cloudRunUrls) {
+    const firstUrl = cloudRunUrls.split(",")[0]?.trim();
+    if (firstUrl) {
+      const normalized = firstUrl.replace(/\/$/, "");
+      return `${normalized}/internal/workers/convert`;
+    }
+  }
+
   const port = process.env.PORT ?? config.port;
-  const base = apiUrl || `http://localhost:${port}`;
-  const normalized = base.replace(/\/$/, "");
-  return `${normalized}/internal/workers/convert`;
+  return `http://localhost:${port}/internal/workers/convert`;
 }
 
 export function getConversionDispatchTarget(): ConversionDispatchTarget {

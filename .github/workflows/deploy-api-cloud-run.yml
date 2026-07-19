@@ -130,11 +130,19 @@ jobs:
             --set-env-vars CONVERSION_DISPATCHER="cloud-tasks" \
             --set-env-vars CLOUD_TASKS_QUEUE_NAME="${CLOUD_TASKS_QUEUE_NAME}" \
             --set-env-vars CLOUD_TASKS_LOCATION="${CLOUD_TASKS_LOCATION}" \
-            --set-env-vars CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL="${CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL}" \
-            --set-env-vars INTERNAL_WORKER_URL="" \
-            --set-env-vars INTERNAL_WORKER_AUDIENCE="${{ secrets.CLOUD_RUN_WORKER_AUDIENCE || '' }}"
+            --set-env-vars CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL="${CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL}"
+
+      - name: Resolve Cloud Run service URL and configure worker endpoint
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
+          WORKER_URL="${SERVICE_URL}/internal/workers/convert"
+          echo "Configuring INTERNAL_WORKER_URL=${WORKER_URL}"
+          gcloud run services update "$SERVICE_NAME" \
+            --region "$REGION" \
+            --update-env-vars INTERNAL_WORKER_URL="${WORKER_URL}" \
+            --update-env-vars INTERNAL_WORKER_AUDIENCE="${WORKER_URL}"
+          echo "SERVICE_URL=${SERVICE_URL}" >> "$GITHUB_ENV"
 
       - name: Smoke test deployed API
         run: |
-          URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
-          API_BASE_URL="$URL" node scripts/smoke-api.mjs
+          API_BASE_URL="${SERVICE_URL}" node scripts/smoke-api.mjs
