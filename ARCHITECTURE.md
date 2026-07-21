@@ -105,6 +105,11 @@
 - Location: `apps/api/src/services/firebase-admin.ts`
 - Pattern: Lazy singleton; ADC / service-account / mock modes
 
+**MaintenanceService:**
+- Purpose: Stuck job recovery and orphaned upload session cleanup
+- Location: `apps/api/src/services/maintenance-service.ts`
+- Pattern: Scans for stale processing jobs (re-enqueues them) and expired upload sessions (deletes orphaned GCS objects); invoked via OIDC-protected `/internal/maintenance/run`
+
 **ApiError:**
 - Purpose: Typed HTTP error with status code, error code, and user-safe message
 - Location: `apps/api/src/utils/api-error.ts`
@@ -126,6 +131,15 @@
 - Location: `apps/api/src/routes/v1.ts` (`POST /internal/workers/convert`)
 - Triggers: Cloud Tasks HTTP invocation with OIDC service account token
 - Responsibilities: Idempotent job claim, LibreOffice conversion, status update
+
+**Converter-Only Server:**
+- Location: `apps/api/src/server-converter.ts`
+- Triggers: `node server-converter.js` (separate process from main API)
+- Responsibilities: Initializes LibreOffice via `converter-readiness.ts`, runs conversion worker endpoint only
+
+**Converter Readiness:**
+- Location: `apps/api/src/converter-readiness.ts`
+- Responsibilities: Validates OIDC config for internal worker, pre-warms LibreOffice with `--terminate_after_init` flag
 
 **Next.js App Layout:**
 - Location: `apps/web/src/app/layout.tsx`

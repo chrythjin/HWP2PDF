@@ -48,15 +48,15 @@
 
 **`apps/api/src/middleware/`:**
 - Purpose: Request preprocessing and authorization
-- Contains: `auth.ts` (Firebase token verification), `upload.ts` (multipart file handling), `error-handler.ts` (centralized error responses), `worker-auth.ts` (OIDC verification for internal endpoints), `maintenance-auth.ts`, `request-id.ts`
+- Contains: `auth.ts` (Firebase token verification), `upload.ts` (multipart file handling), `error-handler.ts` (centralized error responses), `worker-auth.ts` (OIDC verification for internal endpoints), `maintenance-auth.ts` (OIDC verification for maintenance endpoints), `request-id.ts`
 
 **`apps/api/src/routes/`:**
 - Purpose: Express routers defining API endpoints
-- Contains: `v1.ts` (upload, job status, download, member history, worker endpoint), `v1.board.ts` (CRUD for board posts), `maintenance.ts` (cleanup/maintenance endpoints)
+- Contains: `v1.ts` (upload, job status, download, member history, worker endpoint), `v1.board.ts` (CRUD for board posts), `maintenance.ts` (`POST /internal/maintenance/run` with OIDC protection)
 
 **`apps/api/src/services/`:**
 - Purpose: Core business logic
-- Contains: `conversion-service.ts` (LibreOffice invocation), `job-store.ts` (JobRecord CRUD + owner-aware lookups + tombstone retention), `storage-service.ts` (GCS/local dual backend + owner verification), `cloud-tasks-dispatcher.ts` (async job queue), `board-store.ts` (board post CRUD), `firebase-admin.ts` (Firebase Admin SDK lifecycle), `maintenance-service.ts`
+- Contains: `conversion-service.ts` (LibreOffice invocation), `job-store.ts` (JobRecord CRUD + owner-aware lookups + tombstone retention), `storage-service.ts` (GCS/local dual backend + owner verification), `cloud-tasks-dispatcher.ts` (async job queue), `board-store.ts` (board post CRUD), `firebase-admin.ts` (Firebase Admin SDK lifecycle), `maintenance-service.ts` (stuck job recovery + upload session cleanup), `converter-readiness.ts` (LibreOffice runtime initialization)
 
 **`apps/api/src/utils/`:**
 - Purpose: Shared utilities with no external dependencies
@@ -86,6 +86,7 @@
 
 **Entry Points:**
 - API server: `apps/api/src/server.ts` — creates app, listens on `PORT`
+- Converter server: `apps/api/src/server-converter.ts` — separate process for LibreOffice pre-warm and worker endpoint
 - Next.js: `apps/web/src/app/layout.tsx` — root layout with `<AuthProvider>`
 
 **Configuration:**

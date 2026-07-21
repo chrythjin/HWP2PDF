@@ -92,4 +92,6 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260712_201308_t8-board-history-accessibility-delete-dialog.md` - T8 delete dialog.
 - `sessions/20260719_142417_t5-oidc-maintenance-iam-gate.md` - T5 OIDC maintenance endpoint + IAM gate resolution (correct Cloud Build SA: hwp2pdf-runner@hwp2pdf-499911.iam.gserviceaccount.com; Cloud Run hwp2pdf-maintenance deployed).
 - `sessions/20260720_002949_deploy-failures-and-security-hardening.md` - diagnosed GitHub Actions deploy failures (Cloud Tasks worker URL `http://` violation, Vercel pnpm 8.15.0 vs 8.15.1 mismatch) and resolved 3 security issues from `analysis_results.md` (download rate limit, safe error logging, frontend CSP headers).
+- `sessions/20260721_120232_lock-firestore-rules.md` - added firestore.rules to lock down client-side Firestore access and updated firebase.json configuration.
+
 
