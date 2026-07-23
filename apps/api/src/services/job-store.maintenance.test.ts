@@ -87,10 +87,12 @@ describe("MemoryJobStore maintenance", () => {
     const first = await store.recoverStaleProcessingJobs({ cutoff, limit: 1 });
     const second = await store.recoverStaleProcessingJobs({ cutoff, limit: 1, cursor: first.nextCursor });
     const repeat = await store.recoverStaleProcessingJobs({ cutoff, limit: 10 });
+    const afterRecovery = await store.recoverStaleProcessingJobs({ cutoff, limit: 10 });
 
     expect(first.jobs.map((job) => job.jobId)).toEqual(["a"]);
     expect(second.jobs.map((job) => job.jobId)).toEqual(["b"]);
-    expect(repeat.jobs).toEqual([]);
+    expect(repeat.jobs.map((job) => job.jobId)).toEqual(["current"]);
+    expect(afterRecovery.jobs).toEqual([]);
     expect((await store.getJob("current"))?.status).toBe("queued");
     expect((await store.getJob("done"))?.status).toBe("completed");
     expect((await store.getJob("deleted"))?.status).toBe("deleted");
@@ -190,10 +192,20 @@ describe("MemoryJobStore maintenance", () => {
   ])("rejects cleanup claim after an expired session gains %s", async (_case, completion) => {
     const store = new MemoryJobStore();
     const cutoff = new Date("2026-01-02T00:00:00.000Z");
-    await store.createUploadSession(session("completed-after-scan", iso(cutoff.getTime() - 1_000)));
+    const candidate = session("completed-after-scan", iso(cutoff.getTime() - 1_000));
+    await store.createUploadSession(candidate);
     const page = await store.expireUploadSessionsForCleanup({ cutoff, limit: 1 });
 
-    await store.completeUploadSession("completed-after-scan", completion);
+    await store.createJob({
+      ...processingJob(candidate.jobId, iso(cutoff.getTime() - 2_000), "queued"),
+      originalFileName: candidate.fileName,
+      originalFileSize: candidate.fileSize,
+      originalObjectPath: candidate.objectPath,
+      ownerType: candidate.ownerType,
+      userId: candidate.userId,
+    });
+    expect((await store.claimUploadSessionForCompletion(candidate.jobId, "completion-claim")).status).toBe("claimed");
+    expect(await store.completeUploadSession(candidate.jobId, completion, "completion-claim")).toBeDefined();
 
     expect(await store.claimExpiredUploadObject(page.sessions[0])).toBeNull();
   });
@@ -217,6 +229,56 @@ describe("MemoryJobStore maintenance", () => {
 });
 
 describe("FirestoreJobStore transaction maintenance", () => {
+  it("purges the oldest deadline fairly when metadata and tombstone queries share a limit", async () => {
+    const cutoff = new Date("2027-01-02T00:00:00.000Z");
+    const metadataDeadline = iso(cutoff.getTime() - 1_000);
+    const tombstoneDeadline = iso(cutoff.getTime() - 2_000);
+    const metadata = {
+      ...processingJob("expired-metadata", metadataDeadline, "completed"),
+      metadataExpiresAt: metadataDeadline,
+    };
+    const tombstone = {
+      ...processingJob("expired-tombstone", tombstoneDeadline, "deleted"),
+      deletedAt: tombstoneDeadline,
+      deletedBy: "owner-1",
+      tombstoneUntil: tombstoneDeadline,
+    };
+    const state = new Map<string, JobRecord>([[metadata.jobId, metadata], [tombstone.jobId, tombstone]]);
+    const docs = new Map([
+      ["metadataExpiresAt", [{ id: metadata.jobId, ref: { id: metadata.jobId }, data: () => metadata }]],
+      ["tombstoneUntil", [{ id: tombstone.jobId, ref: { id: tombstone.jobId }, data: () => tombstone }]],
+    ]);
+    const collection = {
+      field: "",
+      where(field: string) { this.field = field; return this; },
+      orderBy() { return this; },
+      limit(limit: number) {
+        const field = this.field;
+        return { get: async () => {
+          const selected = docs.get(field)!.filter((doc) => state.has(doc.id)).slice(0, limit);
+          return { docs: selected, size: selected.length };
+        } };
+      },
+    };
+    const transaction = {
+      get: async (ref: { id: string }) => ({ exists: state.has(ref.id), data: () => state.get(ref.id) }),
+      delete: (ref: { id: string }) => state.delete(ref.id),
+    };
+    const firestore = {
+      collection: () => collection,
+      runTransaction: async <T>(fn: (tx: typeof transaction) => Promise<T>) => fn(transaction),
+    };
+
+    const store = new FirestoreJobStore(firestore as never);
+    const first = await store.purgeExpiredJobs({ cutoff, limit: 1 });
+    const second = await store.purgeExpiredJobs({ cutoff, limit: 1 });
+
+    expect(first).toEqual({ purged: 1, hasMore: true });
+    expect(state.has(tombstone.jobId)).toBe(false);
+    expect(second).toEqual({ purged: 1, hasMore: false });
+    expect(state.size).toBe(0);
+  });
+
   it("matches Memory diagnostics for static completed, claimed, cutoff, and accepted records", async () => {
     const cutoff = new Date("2026-01-02T00:00:00.000Z");
     const expiredAt = iso(cutoff.getTime() - 1_000);

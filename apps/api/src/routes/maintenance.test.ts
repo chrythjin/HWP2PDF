@@ -6,22 +6,36 @@ import { setMaintenanceOidcVerifierForTesting } from "../middleware/maintenance-
 
 const {
   claimExpiredUploadObjectMock,
+  claimExpiredJobDeletionsMock,
   deleteExactStoredObjectMock,
+  deleteStoredJobFilesMock,
   enqueueConversionJobMock,
   expireUploadSessionsForCleanupMock,
+  finalizeExpiredUploadObjectMock,
+  finalizeJobDeletionMock,
+  purgeExpiredJobsMock,
   recoverStaleProcessingJobsMock,
 } = vi.hoisted(() => ({
   claimExpiredUploadObjectMock: vi.fn(),
+  claimExpiredJobDeletionsMock: vi.fn(),
   deleteExactStoredObjectMock: vi.fn(),
+  deleteStoredJobFilesMock: vi.fn(),
   enqueueConversionJobMock: vi.fn(),
   expireUploadSessionsForCleanupMock: vi.fn(),
+  finalizeExpiredUploadObjectMock: vi.fn(),
+  finalizeJobDeletionMock: vi.fn(),
+  purgeExpiredJobsMock: vi.fn(),
   recoverStaleProcessingJobsMock: vi.fn(),
 }));
 
 vi.mock("../services/job-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/job-store.js")>()),
   claimExpiredUploadObject: claimExpiredUploadObjectMock,
+  claimExpiredJobDeletions: claimExpiredJobDeletionsMock,
   expireUploadSessionsForCleanup: expireUploadSessionsForCleanupMock,
+  finalizeExpiredUploadObject: finalizeExpiredUploadObjectMock,
+  finalizeJobDeletion: finalizeJobDeletionMock,
+  purgeExpiredJobs: purgeExpiredJobsMock,
   recoverStaleProcessingJobs: recoverStaleProcessingJobsMock,
 }));
 
@@ -33,6 +47,7 @@ vi.mock("../services/cloud-tasks-dispatcher.js", async (importOriginal) => ({
 vi.mock("../services/storage-service.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/storage-service.js")>()),
   deleteExactStoredObject: deleteExactStoredObjectMock,
+  deleteStoredJobFiles: deleteStoredJobFilesMock,
 }));
 
 const endpoint = "/internal/maintenance/run";
@@ -60,8 +75,13 @@ describe("POST /internal/maintenance/run", () => {
     recoverStaleProcessingJobsMock.mockResolvedValue({ jobs: [], nextCursor: undefined });
     expireUploadSessionsForCleanupMock.mockResolvedValue({ sessions: [], nextCursor: undefined });
     claimExpiredUploadObjectMock.mockResolvedValue(null);
+    finalizeExpiredUploadObjectMock.mockResolvedValue(true);
+    claimExpiredJobDeletionsMock.mockResolvedValue({ claims: [], hasMore: false });
+    purgeExpiredJobsMock.mockResolvedValue({ purged: 0, hasMore: false });
+    finalizeJobDeletionMock.mockResolvedValue(null);
     enqueueConversionJobMock.mockResolvedValue({ mode: "mock" });
     deleteExactStoredObjectMock.mockResolvedValue(undefined);
+    deleteStoredJobFilesMock.mockResolvedValue(undefined);
     app = await createApp();
   });
 
@@ -147,7 +167,7 @@ describe("POST /internal/maintenance/run", () => {
   it("accepts only the configured identity and uses successful T4 claims", async () => {
     const recoveredJob = { jobId: "recovered-job", status: "queued" };
     const unclaimedSession = { jobId: "unclaimed", objectPath: "staging/unclaimed.hwp" };
-    const claimedSession = { jobId: "claimed", objectPath: "staging/claimed.hwp" };
+    const claimedSession = { jobId: "claimed", objectPath: "staging/claimed.hwp", cleanupClaimId: "claim-1" };
     recoverStaleProcessingJobsMock.mockResolvedValue({ jobs: [recoveredJob] });
     expireUploadSessionsForCleanupMock.mockResolvedValue({
       sessions: [unclaimedSession, claimedSession],
@@ -176,7 +196,7 @@ describe("POST /internal/maintenance/run", () => {
 
   it("does not enqueue or delete a successful T4 claim again on re-invocation", async () => {
     const recoveredJob = { jobId: "one-time-recovery", status: "queued" };
-    const claimedSession = { jobId: "one-time-cleanup", objectPath: "staging/one-time.hwp" };
+    const claimedSession = { jobId: "one-time-cleanup", objectPath: "staging/one-time.hwp", cleanupClaimId: "claim-2" };
     recoverStaleProcessingJobsMock
       .mockResolvedValueOnce({ jobs: [recoveredJob], nextCursor: undefined })
       .mockResolvedValueOnce({ jobs: [], nextCursor: undefined });
@@ -210,7 +230,7 @@ describe("POST /internal/maintenance/run", () => {
 
   it("advances past an ineligible cleanup page with batch limit one without duplicate side effects", async () => {
     process.env.MAINTENANCE_BATCH_LIMIT = "1";
-    const claimedSession = { jobId: "later-expired", objectPath: "staging/later-expired.hwp" };
+    const claimedSession = { jobId: "later-expired", objectPath: "staging/later-expired.hwp", cleanupClaimId: "claim-3" };
     expireUploadSessionsForCleanupMock
       .mockResolvedValueOnce({ sessions: [], nextCursor: "after-ineligible" })
       .mockResolvedValueOnce({ sessions: [claimedSession], nextCursor: undefined })
@@ -351,7 +371,7 @@ describe("POST /internal/maintenance/run", () => {
 
   it("returns sanitized cleanup deletion failure counts", async () => {
     const logSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const claimedSession = { jobId: "cleanup-job", objectPath: "staging/private-upload.hwp" };
+    const claimedSession = { jobId: "cleanup-job", objectPath: "staging/private-upload.hwp", cleanupClaimId: "claim-4" };
     expireUploadSessionsForCleanupMock.mockResolvedValue({ sessions: [claimedSession] });
     claimExpiredUploadObjectMock.mockResolvedValue(claimedSession);
     deleteExactStoredObjectMock.mockRejectedValue(

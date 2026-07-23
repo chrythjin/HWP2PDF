@@ -15,7 +15,7 @@ This folder is the project documentation entry point for future OpenCode session
 ## Verified repository shape
 
 - Root package: pnpm workspace named `hwp2pdf`.
-- Frontend: `apps/web`, package name `web`, Next.js 16.2.9.
+- Frontend: `apps/web`, package name `web`, Next.js 16.2.11.
 - Backend API: `apps/api`, package name `api`, Express + TypeScript conversion API.
 - Shared package: `packages/shared`, package name `@hwp2pdf/shared`.
 
@@ -93,5 +93,6 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260719_142417_t5-oidc-maintenance-iam-gate.md` - T5 OIDC maintenance endpoint + IAM gate resolution (correct Cloud Build SA: hwp2pdf-runner@hwp2pdf-499911.iam.gserviceaccount.com; Cloud Run hwp2pdf-maintenance deployed).
 - `sessions/20260720_002949_deploy-failures-and-security-hardening.md` - diagnosed GitHub Actions deploy failures (Cloud Tasks worker URL `http://` violation, Vercel pnpm 8.15.0 vs 8.15.1 mismatch) and resolved 3 security issues from `analysis_results.md` (download rate limit, safe error logging, frontend CSP headers).
 - `sessions/20260721_120232_lock-firestore-rules.md` - added firestore.rules to lock down client-side Firestore access and updated firebase.json configuration.
+- `sessions/20260724_043535_full-review-lease-purge-remediation.md` - full codebase review remediation covering upload/deletion leases, retention enforcement, physical purge, runtime validation, dependency patches, and live surface verification.
 
 

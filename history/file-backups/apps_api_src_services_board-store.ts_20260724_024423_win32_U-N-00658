@@ -33,27 +33,27 @@ export interface BoardPostInput {
 
 /** Validate title/body/category with length constraints. Returns error string or null. */
 export function validateBoardPostInput(input: {
-  title?: unknown;
-  body?: unknown;
-  category?: unknown;
+  title?: string;
+  body?: string;
+  category?: string;
 }): string | null {
   const { title, body, category } = input;
 
-  if (typeof title !== "string" || title.trim().length === 0) {
+  if (!title || title.trim().length === 0) {
     return "게시판 제목을 입력하세요.";
   }
   if (title.length > TITLE_MAX_LENGTH) {
     return `게시판 제목은 ${TITLE_MAX_LENGTH}자 이하여야 합니다.`;
   }
 
-  if (typeof body !== "string" || body.trim().length === 0) {
+  if (!body || body.trim().length === 0) {
     return "게시판 내용을 입력하세요.";
   }
   if (body.length > BODY_MAX_LENGTH) {
     return `게시판 내용은 ${BODY_MAX_LENGTH}자 이하여야 합니다.`;
   }
 
-  if (typeof category !== "string" || !BOARD_CATEGORIES.includes(category as BoardCategory)) {
+  if (!category || !BOARD_CATEGORIES.includes(category as BoardCategory)) {
     return "게시판 카테고리는 general, qna, notice 중 하나여야 합니다.";
   }
 

@@ -5,7 +5,6 @@ import {
   isMetadataExpired,
   isDownloadExpired,
   type JobRecord,
-  type UpdateJobPatch,
   type UploadSessionRecord,
 } from "./job-store.js";
 import {
@@ -100,20 +99,6 @@ describe("MemoryJobStore owner-aware behavior", () => {
     const fetched = await store.getJob(job.jobId);
     expect(fetched).toBeDefined();
     expect(fetched?.accessTokenHash).toBe("abc123hash");
-  });
-
-  it("does not allow updateJob to extend metadata retention at runtime", async () => {
-    const originalExpiry = new Date(Date.now() + DEFAULT_METADATA_RETENTION_MS).toISOString();
-    await store.createJob(baseUserJob({ jobId: "retention-fixed", metadataExpiresAt: originalExpiry }));
-    const untrustedPatch = {
-      status: "completed" as const,
-      metadataExpiresAt: new Date(Date.now() + DEFAULT_METADATA_RETENTION_MS * 2).toISOString(),
-    } as UpdateJobPatch;
-
-    const updated = await store.updateJob("retention-fixed", untrustedPatch);
-
-    expect(updated?.status).toBe("completed");
-    expect(updated?.metadataExpiresAt).toBe(originalExpiry);
   });
 
   it("preserves old job compatibility (no ownerType)", async () => {
@@ -257,16 +242,6 @@ describe("getJobForUser", () => {
     const job = await store.getJobForUser("j1", "user-A");
     expect(job).toBeNull();
   });
-
-  it("returns null when member metadata retention has expired", async () => {
-    await store.createJob(baseUserJob({
-      jobId: "expired-metadata",
-      userId: "user-A",
-      metadataExpiresAt: new Date(Date.now() - 1000).toISOString(),
-    }));
-
-    expect(await store.getJobForUser("expired-metadata", "user-A")).toBeNull();
-  });
 });
 
 describe("getJobForAnonymous", () => {
@@ -357,18 +332,6 @@ describe("listJobsByUser", () => {
     expect(jobs).toEqual([]);
   });
 
-  it("excludes member jobs whose metadata retention has expired", async () => {
-    await store.createJob(baseUserJob({ jobId: "active", userId: "user-A" }));
-    await store.createJob(baseUserJob({
-      jobId: "expired-metadata",
-      userId: "user-A",
-      metadataExpiresAt: new Date(Date.now() - 1000).toISOString(),
-    }));
-
-    const jobs = await store.listJobsByUser("user-A");
-    expect(jobs.map((job) => job.jobId)).toEqual(["active"]);
-  });
-
   it("sorts by createdAt descending (newest first)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 0, 1, 0, 0, 0));
@@ -377,10 +340,11 @@ describe("listJobsByUser", () => {
     vi.setSystemTime(new Date(2026, 0, 1, 0, 0, 5));
     await store.createJob(baseUserJob({ jobId: "new", userId: "user-A" }));
 
+    vi.useRealTimers();
+
     const jobs = await store.listJobsByUser("user-A");
     expect(jobs[0].jobId).toBe("new");
     expect(jobs[1].jobId).toBe("old");
-    vi.useRealTimers();
   });
 });
 
@@ -440,7 +404,7 @@ describe("markJobDeleted", () => {
     expect(deleted?.userId).toBe("user-A");
     expect(deleted?.accessTokenHash).toBeUndefined();
     expect(deleted?.downloadExpiresAt).toBeUndefined();
-    expect(deleted?.metadataExpiresAt).toBeUndefined();
+    expect(deleted?.metadataExpiresAt).toBeDefined();
     expect(deleted?.message).toBeUndefined();
     expect(Object.keys(deleted!).sort()).toEqual([
       "createdAt",
@@ -448,6 +412,7 @@ describe("markJobDeleted", () => {
       "deletedBy",
       "expiresAt",
       "jobId",
+      "metadataExpiresAt",
       "originalFileName",
       "ownerType",
       "progress",
@@ -572,110 +537,19 @@ describe("UploadSession CRUD", () => {
     expect(fetched).toBeNull();
   });
 
-  it("completeUploadSession consumes the exact claim and removes sensitive session data", async () => {
+  it("completeUploadSession sets completedAt and merges updates", async () => {
     await store.createUploadSession(baseUploadSession());
-    expect((await store.claimUploadSessionForCompletion("job-session-1", "claim-a")).status).toBe("claimed");
     const completed = await store.completeUploadSession("job-session-1", {
       fileName: "renamed.hwp",
-    }, "claim-a");
+    });
     expect(completed).toBeDefined();
     expect(completed?.completedAt).toBeDefined();
     expect(completed?.fileName).toBe("renamed.hwp");
-    expect(await store.getUploadSession("job-session-1")).toBeNull();
   });
 
   it("completeUploadSession returns null when session does not exist", async () => {
     const result = await store.completeUploadSession("nonexistent");
     expect(result).toBeNull();
-  });
-
-  it("allows only one concurrent completion claim and permits retry after release", async () => {
-    await store.createUploadSession(baseUploadSession());
-
-    const [first, second] = await Promise.all([
-      store.claimUploadSessionForCompletion("job-session-1", "claim-a"),
-      store.claimUploadSessionForCompletion("job-session-1", "claim-b"),
-    ]);
-
-    expect([first.status, second.status].sort()).toEqual(["already_claimed", "claimed"]);
-    const winningClaimId = first.status === "claimed" ? "claim-a" : "claim-b";
-    await store.releaseUploadSessionCompletion("job-session-1", winningClaimId);
-
-    const retry = await store.claimUploadSessionForCompletion("job-session-1", "claim-retry");
-    expect(retry.status).toBe("claimed");
-  });
-
-  it("permits completion retry after a crashed claim lease expires", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2027-01-01T00:00:00.000Z"));
-    await store.createUploadSession(baseUploadSession({ expiresAt: "2027-01-01T01:00:00.000Z" }));
-    expect((await store.claimUploadSessionForCompletion("job-session-1", "claim-a")).status).toBe("claimed");
-
-    vi.setSystemTime(new Date("2027-01-01T00:06:00.000Z"));
-    expect((await store.claimUploadSessionForCompletion("job-session-1", "claim-b")).status).toBe("claimed");
-  });
-
-  it("reuses an identity-matching job after a completion crash instead of deleting its upload", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2027-01-01T00:00:00.000Z"));
-    const session = baseUploadSession({
-      ownerType: "user",
-      userId: "user-A",
-      fileName: "doc.hwp",
-      fileSize: 1234,
-      objectPath: "originals/job-session-1/doc.hwp",
-      accessTokenHash: undefined,
-      expiresAt: "2027-01-01T01:00:00.000Z",
-    });
-    await store.createUploadSession(session);
-    await store.claimUploadSessionForCompletion(session.jobId, "claim-a");
-    await store.createJob(baseUserJob({
-      jobId: session.jobId,
-      userId: "user-A",
-      originalFileName: session.fileName,
-      originalFileSize: session.fileSize,
-      originalObjectPath: session.objectPath,
-    }));
-
-    vi.setSystemTime(new Date("2027-01-01T00:06:00.000Z"));
-    const retry = await store.claimUploadSessionForCompletion(session.jobId, "claim-b");
-    const cleanup = await store.expireUploadSessionsForCleanup({ cutoff: new Date("2027-01-01T02:00:00.000Z"), limit: 10 });
-
-    expect(retry).toMatchObject({ status: "claimed", existingJob: { jobId: session.jobId } });
-    expect(cleanup.sessions).toEqual([]);
-  });
-
-  it("reclaims an expired upload cleanup lease and only lets the latest claim finalize", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2027-01-01T00:00:00.000Z"));
-    const session = baseUploadSession({
-      status: "expired",
-      expiredAt: "2027-01-01T00:00:00.000Z",
-      expiresAt: "2026-12-31T23:59:00.000Z",
-    });
-    await store.createUploadSession(session);
-
-    const first = await store.claimExpiredUploadObject(session);
-    expect(first?.cleanupClaimId).toEqual(expect.any(String));
-
-    vi.setSystemTime(new Date("2027-01-01T00:06:00.000Z"));
-    const second = await store.claimExpiredUploadObject(session);
-    expect(second?.cleanupClaimId).toEqual(expect.any(String));
-    expect(second?.cleanupClaimId).not.toBe(first?.cleanupClaimId);
-    expect(await store.finalizeExpiredUploadObject(session.jobId, first!.cleanupClaimId!)).toBe(false);
-    expect(await store.finalizeExpiredUploadObject(session.jobId, second!.cleanupClaimId!)).toBe(true);
-    expect(await store.getUploadSession(session.jobId)).toBeNull();
-  });
-
-  it("rejects stale completion and removes the session after the winning claim completes", async () => {
-    await store.createUploadSession(baseUploadSession());
-    expect((await store.claimUploadSessionForCompletion("job-session-1", "claim-a")).status).toBe("claimed");
-    expect(await store.completeUploadSession("job-session-1", undefined, "claim-b")).toBeNull();
-    expect(await store.getUploadSession("job-session-1")).toMatchObject({ completionClaimId: "claim-a" });
-    expect(await store.completeUploadSession("job-session-1", undefined, "claim-a")).toBeDefined();
-
-    const retry = await store.claimUploadSessionForCompletion("job-session-1", "claim-b");
-    expect(retry.status).toBe("not_found");
   });
 
   it("UploadSession mismatch — getUploadSession returns null for wrong jobId", async () => {
@@ -807,65 +681,5 @@ describe("tombstone filtering", () => {
 
     const jobs = await store.listJobsByUser("user-A", { includeDeleted: true });
     expect(jobs.find((j) => j.jobId === "j1")).toMatchObject({ status: "deleted", userId: "user-A" });
-  });
-
-  it("reclaims an expired deletion lease without restoring the live job", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2027-01-01T00:00:00.000Z"));
-    await store.createJob(baseUserJob({ jobId: "lease-delete", userId: "user-A" }));
-    const first = await store.claimJobDeletion("lease-delete", "user-A", "claim-a");
-    expect(first.status).toBe("claimed");
-
-    vi.setSystemTime(new Date("2027-01-01T00:06:00.000Z"));
-    const page = await store.claimExpiredJobDeletions({ cutoff: new Date(), limit: 10 });
-    expect(page.claims).toHaveLength(1);
-    expect(page.claims[0]?.job.jobId).toBe("lease-delete");
-    expect((await store.getJob("lease-delete"))?.status).toBe("deleted");
-
-    const finalized = await store.finalizeJobDeletion("lease-delete", page.claims[0]!.claimId);
-    expect(finalized?.status).toBe("deleted");
-    expect(finalized?.cleanupPending).toBeUndefined();
-  });
-
-  it("purges an expired public tombstone while private deletion cleanup remains resumable", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2027-01-01T00:00:00.000Z"));
-    await store.createJob(baseUserJob({ jobId: "private-cleanup-survives", userId: "user-A" }));
-    const claim = await store.claimJobDeletion("private-cleanup-survives", "user-A", "claim-a");
-    expect(claim.status).toBe("claimed");
-
-    vi.setSystemTime(new Date("2027-02-01T00:00:00.000Z"));
-    const purged = await store.purgeExpiredJobs({ cutoff: new Date(), limit: 10 });
-    expect(purged.purged).toBe(1);
-    expect(await store.getJob("private-cleanup-survives")).toBeUndefined();
-
-    const resumed = await store.claimExpiredJobDeletions({ cutoff: new Date(), limit: 10 });
-    expect(resumed.claims).toHaveLength(1);
-    expect(resumed.claims[0]?.job.jobId).toBe("private-cleanup-survives");
-    expect(await store.finalizeJobDeletion("private-cleanup-survives", resumed.claims[0]!.claimId)).toMatchObject({
-      jobId: "private-cleanup-survives",
-      status: "deleted",
-    });
-  });
-
-  it("physically purges expired metadata and finalized tombstones only", async () => {
-    const past = new Date(Date.now() - 1_000).toISOString();
-    const future = new Date(Date.now() + 60_000).toISOString();
-    await store.createJob(baseUserJob({ jobId: "expired-metadata", metadataExpiresAt: past }));
-    await store.createJob(baseUserJob({ jobId: "active-metadata", metadataExpiresAt: future }));
-    await store.createJob(baseUserJob({
-      jobId: "expired-tombstone",
-      userId: "user-A",
-      status: "deleted",
-      deletedAt: past,
-      deletedBy: "user-A",
-      tombstoneUntil: past,
-    }));
-
-    const result = await store.purgeExpiredJobs({ cutoff: new Date(), limit: 10 });
-    expect(result.purged).toBe(2);
-    expect(await store.getJob("expired-metadata")).toBeUndefined();
-    expect(await store.getJob("expired-tombstone")).toBeUndefined();
-    expect(await store.getJob("active-metadata")).toBeDefined();
   });
 });

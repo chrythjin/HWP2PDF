@@ -11,6 +11,16 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
     return;
   }
 
+  if (error instanceof SyntaxError && "status" in error && error.status === 400 && "body" in error) {
+    response.status(422).json({
+      error: {
+        code: "invalid_json_body",
+        message: "요청 본문이 올바른 JSON 형식이 아닙니다.",
+      },
+    });
+    return;
+  }
+
   // Log a safe diagnostic summary only. The raw error.message may include
   // internal paths, stack traces, or GCS object paths — never log it raw.
   // requestId lets operators correlate with the specific failing request

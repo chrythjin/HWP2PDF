@@ -24,18 +24,14 @@ import { config } from "../config.js";
 import { boardRouter } from "./v1.board.js";
 import {
   claimQueuedJobForProcessing,
-  claimJobDeletion,
-  claimUploadSessionForCompletion,
   completeUploadSession,
   createJob,
   createUploadSession,
-  finalizeJobDeletion,
   getJob,
   getJobForUser,
   getUploadSession,
-  isMetadataExpired,
   listJobsByUser,
-  releaseUploadSessionCompletion,
+  markJobDeleted,
   updateJob,
   type ClaimQueuedJobResult,
   type JobRecord,
@@ -140,9 +136,7 @@ router.get(API_ROUTES.HEALTH, (_request, response) => {
 
 router.post(API_ROUTES.UPLOADS_INITIATE, optionalAuth, async (request, response, next) => {
   try {
-    const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
-      ? request.body as Partial<DirectUploadInitRequest>
-      : {};
+    const body = request.body as Partial<DirectUploadInitRequest>;
     if (!body.fileName || typeof body.fileSize !== "number") {
       next(new ApiError(422, "invalid_upload_request", "파일 이름과 크기를 확인하세요."));
       return;
@@ -200,7 +194,7 @@ router.post(API_ROUTES.UPLOADS_INITIATE, optionalAuth, async (request, response,
       expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
     });
 
-    const responseBody: DirectUploadInitResponse = {
+    const responseBody: DirectUploadInitResponse & { accessToken?: string; accessTokenHeader?: string } = {
       uploadMode: "direct",
       jobId,
       uploadUrl: upload.uploadUrl,
@@ -223,9 +217,7 @@ router.post(API_ROUTES.UPLOADS_INITIATE, optionalAuth, async (request, response,
 
 router.post(API_ROUTES.UPLOADS_COMPLETE, optionalAuth, async (request, response, next) => {
   try {
-    const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
-      ? request.body as Partial<DirectUploadCompleteRequest>
-      : {};
+    const body = request.body as Partial<DirectUploadCompleteRequest>;
     if (!body.jobId || !body.objectPath || !body.fileName || typeof body.fileSize !== "number") {
       next(new ApiError(422, "invalid_upload_complete_request", "업로드 완료 정보가 올바르지 않습니다."));
       return;
@@ -249,11 +241,6 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, optionalAuth, async (request, response,
 
     if (session.completedAt) {
       next(new ApiError(409, "upload_session_already_completed", "이미 완료된 업로드 세션입니다."));
-      return;
-    }
-
-    if (session.status === "expired" || Date.parse(session.expiresAt) <= Date.now()) {
-      next(new ApiError(409, "upload_session_expired", "업로드 세션이 만료되었습니다. 업로드를 다시 시작하세요."));
       return;
     }
 
@@ -294,29 +281,6 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, optionalAuth, async (request, response,
       }
     }
 
-    const completionClaimId = crypto.randomUUID();
-    const claim = await claimUploadSessionForCompletion(body.jobId, completionClaimId);
-    if (claim.status === "not_found") {
-      next(new ApiError(404, "upload_session_not_found", "업로드 세션을 찾을 수 없습니다. 업로드를 먼저 시작하세요."));
-      return;
-    }
-    if (claim.status === "expired") {
-      next(new ApiError(409, "upload_session_expired", "업로드 세션이 만료되었습니다. 업로드를 다시 시작하세요."));
-      return;
-    }
-    if (claim.status === "completed") {
-      next(new ApiError(409, "upload_session_already_completed", "이미 완료된 업로드 세션입니다."));
-      return;
-    }
-    if (claim.status === "already_claimed") {
-      next(new ApiError(409, "upload_session_completion_in_progress", "업로드 완료 처리가 이미 진행 중입니다."));
-      return;
-    }
-    if (claim.status === "conflict") {
-      next(new ApiError(409, "upload_session_job_conflict", "업로드 세션과 기존 작업 정보가 일치하지 않습니다."));
-      return;
-    }
-
     const safeOriginalName = body.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
     const sourcePath = path.join(config.uploadDirectory, `${body.jobId}-${safeOriginalName}`);
 
@@ -334,48 +298,44 @@ router.post(API_ROUTES.UPLOADS_COMPLETE, optionalAuth, async (request, response,
       });
       if (!(await validateHwpFileSignature(sourcePath))) {
         await fs.rm(sourcePath, { force: true });
-        await releaseUploadSessionCompletion(body.jobId, completionClaimId);
+        await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
         next(new ApiError(422, "invalid_file_signature", "올바른 HWP 파일이 아닙니다."));
         return;
       }
     } catch (error) {
       await fs.rm(sourcePath, { force: true });
-      await releaseUploadSessionCompletion(body.jobId, completionClaimId);
       throw error;
     }
 
-    let job: JobRecord;
+    const job = await createJob({
+      jobId: body.jobId,
+      originalFileName: body.fileName,
+      originalFileSize: session.fileSize,
+      sourcePath,
+      originalObjectPath: body.objectPath,
+      expiresAt,
+      downloadExpiresAt: expiresAt,
+      metadataExpiresAt,
+      status: "queued",
+      progress: PROGRESS.QUEUED,
+      message: "변환 작업이 대기열에 등록되었습니다.",
+      // Owner fields from the verified session.
+      ownerType: session.ownerType,
+      userId: session.userId,
+      accessTokenHash: session.accessTokenHash,
+    });
+
     try {
-      job = claim.existingJob ?? await createJob({
-        jobId: body.jobId,
-        originalFileName: body.fileName,
-        originalFileSize: session.fileSize,
-        sourcePath,
-        originalObjectPath: body.objectPath,
-        expiresAt,
-        downloadExpiresAt: expiresAt,
-        metadataExpiresAt,
-        status: "queued",
-        progress: PROGRESS.QUEUED,
-        message: "변환 작업이 대기열에 등록되었습니다.",
-        // Owner fields from the verified session.
-        ownerType: session.ownerType,
-        userId: session.userId,
-        accessTokenHash: session.accessTokenHash,
-      });
-    } catch (error) {
-      await fs.rm(sourcePath, { force: true });
-      await releaseUploadSessionCompletion(body.jobId, completionClaimId);
-      throw error;
-    }
-
-    const completedSession = await completeUploadSession(body.jobId, undefined, completionClaimId);
-    if (!completedSession) {
-      throw new ApiError(409, "upload_session_completion_claim_lost", "업로드 완료 권한이 만료되었습니다. 다시 시도하세요.");
-    }
-
-    if (job.status === "queued") {
       await enqueueConversionJob(job.jobId);
+      await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
+    } catch (error) {
+      await updateJob(job.jobId, {
+        status: "failed",
+        progress: PROGRESS.FAILED,
+        message: "변환 작업을 대기열에 등록하지 못했습니다.",
+      });
+      await completeUploadSession(body.jobId, { completedAt: new Date().toISOString() });
+      throw error;
     }
 
     const responseBody: UploadResponse = {
@@ -455,6 +415,7 @@ router.post(API_ROUTES.UPLOAD, optionalAuth, handleUploadMiddleware, async (requ
         progress: PROGRESS.FAILED,
         message: "변환 작업을 대기열에 등록하지 못했습니다.",
       });
+      await fs.rm(file.path, { force: true });
       throw error;
     }
 
@@ -473,11 +434,6 @@ router.post(API_ROUTES.UPLOAD, optionalAuth, handleUploadMiddleware, async (requ
 
     response.status(202).location(`${API_ROUTES.JOBS}/${job.jobId}`).json(body);
   } catch (error) {
-    try {
-      await fs.rm(file.path, { force: true });
-    } catch {
-      // Preserve the original upload failure; cleanup is best-effort.
-    }
     next(error);
   }
 });
@@ -509,11 +465,6 @@ router.get(`${API_ROUTES.JOBS}/:jobId`, optionalAuth, async (request, response, 
         const code = hasAnyCredential ? "forbidden" : "unauthorized";
         const status = hasAnyCredential ? 403 : 401;
         next(new ApiError(status, code, "작업 상태 조회 권한이 없습니다."));
-        return;
-      }
-
-      if (job.ownerType === "user" && isMetadataExpired(job)) {
-        next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
         return;
       }
 
@@ -552,6 +503,19 @@ router.get(`${API_ROUTES.JOBS}/:jobId/download`, optionalAuth, async (request, r
       return;
     }
 
+    const availability = getDownloadAvailability(job);
+
+    if (!availability.downloadAvailable && availability.downloadUnavailableReason === "expired") {
+      await removeLocalResultFile(job.resultPath);
+      next(new ApiError(410, "job_expired", "다운로드 가능 시간이 만료되었습니다."));
+      return;
+    }
+
+    if (!availability.downloadAvailable) {
+      next(new ApiError(409, "result_not_ready", "아직 다운로드할 수 있는 PDF가 없습니다."));
+      return;
+    }
+
     const verifier = buildOwnerVerifier(job);
     const credentials = buildOwnerCredentials(request);
 
@@ -570,24 +534,6 @@ router.get(`${API_ROUTES.JOBS}/:jobId/download`, optionalAuth, async (request, r
       // Legacy job with no owner fields: deny download per plan guardrail
       // "jobId 단독으로 회원/비회원 job status나 downloadUrl 반환 금지".
       next(new ApiError(401, "unauthorized", "다운로드 권한이 없습니다."));
-      return;
-    }
-
-    if (job.ownerType === "user" && isMetadataExpired(job)) {
-      next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
-      return;
-    }
-
-    const availability = getDownloadAvailability(job);
-
-    if (!availability.downloadAvailable && availability.downloadUnavailableReason === "expired") {
-      await removeLocalResultFile(job.resultPath);
-      next(new ApiError(410, "job_expired", "다운로드 가능 시간이 만료되었습니다."));
-      return;
-    }
-
-    if (!availability.downloadAvailable) {
-      next(new ApiError(409, "result_not_ready", "아직 다운로드할 수 있는 PDF가 없습니다."));
       return;
     }
 
@@ -630,7 +576,19 @@ router.get(API_ROUTES.RESULTS, optionalAuth, async (request, response, next) => 
     return;
   }
 
-  // Require owner verification before revealing result state or performing cleanup.
+  if (job.status === "expired") {
+    await removeLocalResultFile(job.resultPath);
+    next(new ApiError(410, "job_expired", job.message ?? "다운로드 가능 시간이 만료되었습니다."));
+    return;
+  }
+
+  if (job.status !== "completed" || !job.resultPath) {
+    next(new ApiError(409, "result_not_ready", "아직 다운로드할 수 있는 PDF가 없습니다."));
+    return;
+  }
+
+  // Require owner verification for all jobs. Legacy jobs without owner
+  // fields are denied per plan guardrail.
   const verifier = buildOwnerVerifier(job);
   if (!verifier) {
     next(new ApiError(401, "unauthorized", "다운로드 권한이 없습니다."));
@@ -643,22 +601,6 @@ router.get(API_ROUTES.RESULTS, optionalAuth, async (request, response, next) => 
     const code = hasAnyCredential ? "forbidden" : "unauthorized";
     const status = hasAnyCredential ? 403 : 401;
     next(new ApiError(status, code, "다운로드 권한이 없습니다."));
-    return;
-  }
-
-  if (job.ownerType === "user" && isMetadataExpired(job)) {
-    next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
-    return;
-  }
-
-  if (job.status === "expired") {
-    await removeLocalResultFile(job.resultPath);
-    next(new ApiError(410, "job_expired", job.message ?? "다운로드 가능 시간이 만료되었습니다."));
-    return;
-  }
-
-  if (job.status !== "completed" || !job.resultPath) {
-    next(new ApiError(409, "result_not_ready", "아직 다운로드할 수 있는 PDF가 없습니다."));
     return;
   }
 
@@ -892,34 +834,35 @@ router.delete(`${API_ROUTES.ME_JOBS}/:jobId`, requireAuth, async (request, respo
     }
 
     const jobId = getParam(request, "jobId");
-    const deletionClaimId = crypto.randomUUID();
-    const deletion = await claimJobDeletion(jobId, request.user.uid, deletionClaimId);
-    if (deletion.status === "not_found" || deletion.status === "forbidden") {
+    const job = await getJobForUser(jobId, request.user.uid);
+
+    if (!job) {
+      // Idempotent delete: if the job is already deleted (tombstone), return 200.
+      // getJobForUser returns null for deleted jobs, so we check the raw record.
+      const raw = await getJob(jobId);
+      if (
+        raw?.status === "deleted"
+        && raw.ownerType === "user"
+        && raw.userId === request.user.uid
+      ) {
+        response.status(200).json({ ok: true, jobId, status: "deleted", noop: true });
+        return;
+      }
       next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
       return;
     }
-    if (deletion.status === "processing") {
+
+    // Refuse to delete a job that is currently processing.
+    if (job.status === "processing") {
       next(new ApiError(409, "job_processing", "처리 중인 작업은 삭제할 수 없습니다. 완료 후 다시 시도하세요."));
       return;
     }
-    if (deletion.status === "already_deleted" || deletion.status === "in_progress") {
-      if (deletion.tombstone.ownerType !== "user" || deletion.tombstone.userId !== request.user.uid) {
-        next(new ApiError(404, "job_not_found", "작업을 찾을 수 없습니다."));
-        return;
-      }
-      if (deletion.status === "in_progress") {
-        next(new ApiError(409, "job_deletion_in_progress", "작업 삭제가 진행 중입니다."));
-        return;
-      }
-      response.status(200).json({ ok: true, jobId, status: "deleted", noop: true });
-      return;
-    }
 
-    await deleteStoredJobFiles(deletion.job);
-    const finalized = await finalizeJobDeletion(jobId, deletion.claimId);
-    if (!finalized) {
-      throw new ApiError(409, "job_deletion_claim_lost", "작업 삭제 권한이 만료되었습니다. 다시 시도하세요.");
-    }
+    // Best-effort delete stored files (GCS objects + local files).
+    await deleteStoredJobFiles(job);
+
+    // Soft-delete: set tombstone, strip downloadUrl/object paths.
+    await markJobDeleted(jobId, request.user.uid);
 
     response.status(200).json({ ok: true, jobId, status: "deleted" });
   } catch (error) {

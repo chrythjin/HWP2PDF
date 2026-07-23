@@ -7,16 +7,13 @@ import { createApp } from "../app.js";
 import {
   createJob,
   createUploadSession,
-  getJob,
   getUploadSession,
   type JobRecord,
   type CreateJobInput,
   type UploadSessionRecord,
 } from "../services/job-store.js";
 import { setTokenVerifierForTesting } from "../middleware/auth.js";
-import { hashAccessToken } from "../utils/access-token.js";
-import { enqueueConversionJob } from "../services/cloud-tasks-dispatcher.js";
-import { persistOriginalFile } from "../services/storage-service.js";
+import { hashAccessToken, generateAnonymousAccessTokenWithHash } from "../utils/access-token.js";
 import {
   API_ROUTES,
   ANONYMOUS_ACCESS_TOKEN_HEADER,
@@ -103,14 +100,6 @@ function makeJob(overrides: Partial<OwnerAwareJobRecord> = {}): OwnerAwareJobRec
 vi.mock("../services/conversion-service.js", () => ({
   convertJobToPdf: vi.fn().mockResolvedValue(undefined),
 }));
-
-vi.mock("../services/cloud-tasks-dispatcher.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../services/cloud-tasks-dispatcher.js")>();
-  return {
-    ...actual,
-    enqueueConversionJob: vi.fn(async () => ({ mode: "mock" as const })),
-  };
-});
 
 // Mock storage-service GCS functions to avoid real GCS calls.
 // shouldUseGcs returns true so the initiate route works, but all actual
@@ -267,96 +256,6 @@ describe("upload initiate/complete/status ownership API (Todo 5)", () => {
       expect(res.status).toBe(202);
       expect(res.body.jobId).toBe(jobId);
       expect(res.body.status).toBe("queued");
-      expect(await getUploadSession(jobId)).toBeNull();
-    });
-
-    it("accepts only one of two concurrent completion requests", async () => {
-      const initRes = await request(app)
-        .post(API_ROUTES.UPLOADS_INITIATE)
-        .send({ fileName: "race.hwp", fileSize: 1024 });
-      const { jobId, objectPath, accessToken } = initRes.body;
-      const complete = () => request(app)
-        .post(API_ROUTES.UPLOADS_COMPLETE)
-        .set(ANONYMOUS_ACCESS_TOKEN_HEADER, accessToken)
-        .send({ jobId, objectPath, fileName: "race.hwp", fileSize: 1024 });
-
-      const responses = await Promise.all([complete(), complete()]);
-
-      expect(responses.map((item) => item.status).sort()).toEqual([202, 409]);
-      expect(responses.find((item) => item.status === 409)?.body.error.code).toMatch(
-        /upload_session_(already_completed|completion_in_progress)/,
-      );
-      expect(vi.mocked(enqueueConversionJob)).toHaveBeenCalledTimes(1);
-    });
-
-    it("leaves a recoverable queued job without sensitive session data when dispatch fails", async () => {
-      vi.mocked(enqueueConversionJob).mockRejectedValueOnce(new Error("dispatch failed"));
-      const initRes = await request(app)
-        .post(API_ROUTES.UPLOADS_INITIATE)
-        .send({ fileName: "recoverable.hwp", fileSize: 1024 });
-      const { jobId, objectPath, accessToken } = initRes.body;
-
-      const res = await request(app)
-        .post(API_ROUTES.UPLOADS_COMPLETE)
-        .set(ANONYMOUS_ACCESS_TOKEN_HEADER, accessToken)
-        .send({ jobId, objectPath, fileName: "recoverable.hwp", fileSize: 1024 });
-
-      expect(res.status).toBe(500);
-      expect(await getUploadSession(jobId)).toBeNull();
-      expect(await getJob(jobId)).toMatchObject({ jobId, status: "queued" });
-    });
-
-    it("returns 409 for an expired upload session", async () => {
-      const { token, hash } = { token: "expired-session-token", hash: hashAccessToken("expired-session-token") };
-      const session = await createUploadSession({
-        jobId: "expired-upload-session",
-        objectPath: "staging/expired-upload-session/doc.hwp",
-        fileName: "doc.hwp",
-        fileSize: 1024,
-        ownerType: "anonymous",
-        accessTokenHash: hash,
-        expiresAt: new Date(Date.now() - 1000).toISOString(),
-      });
-
-      const res = await request(app)
-        .post(API_ROUTES.UPLOADS_COMPLETE)
-        .set(ANONYMOUS_ACCESS_TOKEN_HEADER, token)
-        .send({
-          jobId: session.jobId,
-          objectPath: session.objectPath,
-          fileName: session.fileName,
-          fileSize: session.fileSize,
-        });
-
-      expect(res.status).toBe(409);
-      expect(res.body.error.code).toBe("upload_session_expired");
-    });
-
-    it("returns 409 for a session already marked expired", async () => {
-      const token = "marked-expired-token";
-      const session = await createUploadSession({
-        jobId: "marked-expired-upload-session",
-        objectPath: "staging/marked-expired-upload-session/doc.hwp",
-        fileName: "doc.hwp",
-        fileSize: 1024,
-        ownerType: "anonymous",
-        accessTokenHash: hashAccessToken(token),
-        expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString(),
-        status: "expired",
-      });
-
-      const res = await request(app)
-        .post(API_ROUTES.UPLOADS_COMPLETE)
-        .set(ANONYMOUS_ACCESS_TOKEN_HEADER, token)
-        .send({
-          jobId: session.jobId,
-          objectPath: session.objectPath,
-          fileName: session.fileName,
-          fileSize: session.fileSize,
-        });
-
-      expect(res.status).toBe(409);
-      expect(res.body.error.code).toBe("upload_session_expired");
     });
   });
 
@@ -664,35 +563,6 @@ describe("upload initiate/complete/status ownership API (Todo 5)", () => {
       expect(res.body.accessToken).toBeDefined();
       expect(typeof res.body.accessToken).toBe("string");
       expect(res.body.accessTokenHeader).toBe(ANONYMOUS_ACCESS_TOKEN_HEADER);
-    });
-
-    it("removes the temporary upload when persistence fails", async () => {
-      vi.mocked(persistOriginalFile).mockRejectedValueOnce(new Error("persistence failed"));
-      const hwpPath = path.join(tempUploadDir, "persist-failure.hwp");
-      await fs.writeFile(hwpPath, fakeHwp());
-
-      const res = await request(app)
-        .post(API_ROUTES.UPLOAD)
-        .attach("file", hwpPath);
-
-      expect(res.status).toBe(500);
-      const remaining = await fs.readdir(tempUploadDir);
-      expect(remaining.filter((name) => name.includes("persist-failure"))).toHaveLength(1);
-    });
-
-    it("removes the temporary upload when dispatch fails and preserves the original failure", async () => {
-      vi.mocked(enqueueConversionJob).mockRejectedValueOnce(new Error("dispatch failed"));
-      const hwpPath = path.join(tempUploadDir, "dispatch-failure.hwp");
-      await fs.writeFile(hwpPath, fakeHwp());
-
-      const res = await request(app)
-        .post(API_ROUTES.UPLOAD)
-        .attach("file", hwpPath);
-
-      expect(res.status).toBe(500);
-      expect(res.body.error.code).toBe("internal_error");
-      const remaining = await fs.readdir(tempUploadDir);
-      expect(remaining.filter((name) => name.includes("dispatch-failure"))).toHaveLength(1);
     });
   });
 

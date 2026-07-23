@@ -68,7 +68,7 @@ describe("deleteStoredJobFiles", () => {
     await expect(fs.access(localResultPath)).rejects.toThrow();
   });
 
-  it("is idempotent — calling twice does not throw", async () => {
+  it("is idempotent ??calling twice does not throw", async () => {
     const job = createJob({
       sourcePath: localUploadPath,
       resultPath: localResultPath,
@@ -108,7 +108,7 @@ describe("deleteStoredJobFiles", () => {
 
   it("does not leak file paths in error logs when local delete fails", async () => {
     // Use a path that will cause an error (e.g., a path inside a non-existent
-    // directory that can't be created — but fs.rm with force:true handles
+    // directory that can't be created ??but fs.rm with force:true handles
     // missing files. Instead, mock fs.rm to throw.)
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -122,7 +122,7 @@ describe("deleteStoredJobFiles", () => {
       new Error("EACCES: permission denied, unlink '/some/sensitive/path/secret-file.hwp'"),
     );
 
-    await expect(deleteStoredJobFiles(job)).rejects.toThrow("Local file deletion failed");
+    await deleteStoredJobFiles(job);
 
     // The error should have been logged, but the path should be redacted.
     const logCalls = consoleSpy.mock.calls.map((c) => JSON.stringify(c));
@@ -249,7 +249,7 @@ describe("createOwnerVerifier", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getStatusResponse — download boundary
+// getStatusResponse ??download boundary
 // ---------------------------------------------------------------------------
 
 describe("getStatusResponse", () => {

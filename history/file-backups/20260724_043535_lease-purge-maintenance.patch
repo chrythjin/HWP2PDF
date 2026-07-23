@@ -1,0 +1,224 @@
+Backup format: unified diff from HEAD to the reviewed lease/purge maintenance changes.
+Restore command (from repository root):
+  git apply --reverse history/file-backups/20260724_043535_lease-purge-maintenance.patch
+
+This patch backs up:
+- apps/api/src/services/maintenance-service.ts
+- apps/api/src/routes/maintenance.test.ts
+- apps/api/src/services/job-store.maintenance.test.ts
+
+The exact source remains recoverable from the repository HEAD plus this patch.
+
+diff --git a/apps/api/src/routes/maintenance.test.ts b/apps/api/src/routes/maintenance.test.ts
+index b705fe4..f72d25b 100644
+--- a/apps/api/src/routes/maintenance.test.ts
++++ b/apps/api/src/routes/maintenance.test.ts
+@@ -5,23 +5,37 @@ import { createApp } from "../app.js";
+ import { setMaintenanceOidcVerifierForTesting } from "../middleware/maintenance-auth.js";
+ 
+ const {
+-  claimExpiredUploadObjectMock,
+-  deleteExactStoredObjectMock,
++  claimExpiredUploadObjectMock,
++  claimExpiredJobDeletionsMock,
++  deleteExactStoredObjectMock,
++  deleteStoredJobFilesMock,
+   enqueueConversionJobMock,
+-  expireUploadSessionsForCleanupMock,
++  expireUploadSessionsForCleanupMock,
++  finalizeExpiredUploadObjectMock,
++  finalizeJobDeletionMock,
++  purgeExpiredJobsMock,
+   recoverStaleProcessingJobsMock,
+ } = vi.hoisted(() => ({
+-  claimExpiredUploadObjectMock: vi.fn(),
+-  deleteExactStoredObjectMock: vi.fn(),
++  claimExpiredUploadObjectMock: vi.fn(),
++  claimExpiredJobDeletionsMock: vi.fn(),
++  deleteExactStoredObjectMock: vi.fn(),
++  deleteStoredJobFilesMock: vi.fn(),
+   enqueueConversionJobMock: vi.fn(),
+-  expireUploadSessionsForCleanupMock: vi.fn(),
++  expireUploadSessionsForCleanupMock: vi.fn(),
++  finalizeExpiredUploadObjectMock: vi.fn(),
++  finalizeJobDeletionMock: vi.fn(),
++  purgeExpiredJobsMock: vi.fn(),
+   recoverStaleProcessingJobsMock: vi.fn(),
+ }));
+ 
+ vi.mock("../services/job-store.js", async (importOriginal) => ({
+   ...(await importOriginal<typeof import("../services/job-store.js")>()),
+-  claimExpiredUploadObject: claimExpiredUploadObjectMock,
+-  expireUploadSessionsForCleanup: expireUploadSessionsForCleanupMock,
++  claimExpiredUploadObject: claimExpiredUploadObjectMock,
++  claimExpiredJobDeletions: claimExpiredJobDeletionsMock,
++  expireUploadSessionsForCleanup: expireUploadSessionsForCleanupMock,
++  finalizeExpiredUploadObject: finalizeExpiredUploadObjectMock,
++  finalizeJobDeletion: finalizeJobDeletionMock,
++  purgeExpiredJobs: purgeExpiredJobsMock,
+   recoverStaleProcessingJobs: recoverStaleProcessingJobsMock,
+ }));
+@@ -32,7 +46,8 @@ vi.mock("../services/cloud-tasks-dispatcher.js", async (importOriginal) => ({
+ vi.mock("../services/storage-service.js", async (importOriginal) => ({
+   ...(await importOriginal<typeof import("../services/storage-service.js")>()),
+-  deleteExactStoredObject: deleteExactStoredObjectMock,
++  deleteExactStoredObject: deleteExactStoredObjectMock,
++  deleteStoredJobFiles: deleteStoredJobFilesMock,
+ }));
+@@ -59,9 +74,14 @@ describe("POST /internal/maintenance/run", () => {
+     recoverStaleProcessingJobsMock.mockResolvedValue({ jobs: [], nextCursor: undefined });
+     expireUploadSessionsForCleanupMock.mockResolvedValue({ sessions: [], nextCursor: undefined });
+-    claimExpiredUploadObjectMock.mockResolvedValue(null);
++    claimExpiredUploadObjectMock.mockResolvedValue(null);
++    finalizeExpiredUploadObjectMock.mockResolvedValue(true);
++    claimExpiredJobDeletionsMock.mockResolvedValue({ claims: [], hasMore: false });
++    purgeExpiredJobsMock.mockResolvedValue({ purged: 0, hasMore: false });
++    finalizeJobDeletionMock.mockResolvedValue(null);
+     enqueueConversionJobMock.mockResolvedValue({ mode: "mock" });
+-    deleteExactStoredObjectMock.mockResolvedValue(undefined);
++    deleteExactStoredObjectMock.mockResolvedValue(undefined);
++    deleteStoredJobFilesMock.mockResolvedValue(undefined);
+     app = await createApp();
+@@ -147,7 +167,7 @@ describe("POST /internal/maintenance/run", () => {
+   it("accepts only the configured identity and uses successful T4 claims", async () => {
+     const recoveredJob = { jobId: "recovered-job", status: "queued" };
+     const unclaimedSession = { jobId: "unclaimed", objectPath: "staging/unclaimed.hwp" };
+-    const claimedSession = { jobId: "claimed", objectPath: "staging/claimed.hwp" };
++    const claimedSession = { jobId: "claimed", objectPath: "staging/claimed.hwp", cleanupClaimId: "claim-1" };
+@@ -176,7 +196,7 @@ describe("POST /internal/maintenance/run", () => {
+   it("does not enqueue or delete a successful T4 claim again on re-invocation", async () => {
+     const recoveredJob = { jobId: "one-time-recovery", status: "queued" };
+-    const claimedSession = { jobId: "one-time-cleanup", objectPath: "staging/one-time.hwp" };
++    const claimedSession = { jobId: "one-time-cleanup", objectPath: "staging/one-time.hwp", cleanupClaimId: "claim-2" };
+@@ -210,7 +230,7 @@ describe("POST /internal/maintenance/run", () => {
+   it("advances past an ineligible cleanup page with batch limit one without duplicate side effects", async () => {
+     process.env.MAINTENANCE_BATCH_LIMIT = "1";
+-    const claimedSession = { jobId: "later-expired", objectPath: "staging/later-expired.hwp" };
++    const claimedSession = { jobId: "later-expired", objectPath: "staging/later-expired.hwp", cleanupClaimId: "claim-3" };
+@@ -351,7 +371,7 @@ describe("POST /internal/maintenance/run", () => {
+   it("returns sanitized cleanup deletion failure counts", async () => {
+     const logSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+-    const claimedSession = { jobId: "cleanup-job", objectPath: "staging/private-upload.hwp" };
++    const claimedSession = { jobId: "cleanup-job", objectPath: "staging/private-upload.hwp", cleanupClaimId: "claim-4" };
+
+diff --git a/apps/api/src/services/job-store.maintenance.test.ts b/apps/api/src/services/job-store.maintenance.test.ts
+index 373af78..fc21a1b 100644
+--- a/apps/api/src/services/job-store.maintenance.test.ts
++++ b/apps/api/src/services/job-store.maintenance.test.ts
+@@ -217,6 +217,45 @@ describe("MemoryJobStore maintenance", () => {
+ });
+ 
+ describe("FirestoreJobStore transaction maintenance", () => {
++  it("reports another purge page when metadata and tombstone queries each fill the shared limit", async () => {
++    const cutoff = new Date("2027-01-02T00:00:00.000Z");
++    const expired = iso(cutoff.getTime() - 1_000);
++    const metadata = { ...processingJob("expired-metadata", expired, "completed"), metadataExpiresAt: expired };
++    const tombstone = {
++      ...processingJob("expired-tombstone", expired, "deleted"),
++      deletedAt: expired,
++      deletedBy: "owner-1",
++      tombstoneUntil: expired,
++    };
++    const state = new Map<string, JobRecord>([[metadata.jobId, metadata], [tombstone.jobId, tombstone]]);
++    const docs = new Map([
++      ["metadataExpiresAt", [{ id: metadata.jobId, ref: { id: metadata.jobId } }]],
++      ["tombstoneUntil", [{ id: tombstone.jobId, ref: { id: tombstone.jobId } }]],
++    ]);
++    const collection = {
++      field: "",
++      where(field: string) { this.field = field; return this; },
++      orderBy() { return this; },
++      limit(limit: number) {
++        const field = this.field;
++        return { get: async () => ({ docs: docs.get(field)!.slice(0, limit), size: docs.get(field)!.slice(0, limit).length }) };
++      },
++    };
++    const transaction = {
++      get: async (ref: { id: string }) => ({ exists: state.has(ref.id), data: () => state.get(ref.id) }),
++      delete: (ref: { id: string }) => state.delete(ref.id),
++    };
++    const firestore = {
++      collection: () => collection,
++      runTransaction: async <T>(fn: (tx: typeof transaction) => Promise<T>) => fn(transaction),
++    };
++
++    const result = await new FirestoreJobStore(firestore as never).purgeExpiredJobs({ cutoff, limit: 1 });
++
++    expect(result).toEqual({ purged: 1, hasMore: true });
++    expect(state.size).toBe(1);
++  });
+
+diff --git a/apps/api/src/services/maintenance-service.ts b/apps/api/src/services/maintenance-service.ts
+index 2020cf2..7a73b28 100644
+--- a/apps/api/src/services/maintenance-service.ts
++++ b/apps/api/src/services/maintenance-service.ts
+@@ -1,11 +1,15 @@
+ import { enqueueConversionJob } from "./cloud-tasks-dispatcher.js";
+ import {
+   claimExpiredUploadObject,
++  claimExpiredJobDeletions,
+   type CleanupDiagnostics,
+   expireUploadSessionsForCleanup,
++  finalizeExpiredUploadObject,
++  finalizeJobDeletion,
++  purgeExpiredJobs,
+   recoverStaleProcessingJobs,
+ } from "./job-store.js";
+-import { deleteExactStoredObject } from "./storage-service.js";
++import { deleteExactStoredObject, deleteStoredJobFiles } from "./storage-service.js";
+@@ -14,6 +18,7 @@ export interface MaintenanceSummary {
+   failed: number;
+   hasMore: boolean;
+   cleanupDiagnostics: CleanupDiagnostics & { claimed: number };
++  metadataPurged: number;
+ }
+@@ -62,12 +67,14 @@ async function collectCleanupSessions(cutoff: Date, limit: number) {
+ export async function runMaintenance(now = new Date()): Promise<MaintenanceSummary> {
+   const limit = positiveInteger(process.env.MAINTENANCE_BATCH_LIMIT, 100);
+   const staleMinutes = positiveInteger(process.env.STUCK_JOB_THRESHOLD_MINUTES, 10);
+-  const [recoveryPage, cleanupPage] = await Promise.all([
++  const [recoveryPage, cleanupPage, purgePage, deletionPage] = await Promise.all([
+     recoverStaleProcessingJobs({
+       cutoff: new Date(now.getTime() - staleMinutes * 60_000),
+       limit,
+     }),
+     collectCleanupSessions(now, limit),
++    purgeExpiredJobs({ cutoff: now, limit }),
++    claimExpiredJobDeletions({ cutoff: now, limit }),
+   ]);
+@@ -90,18 +97,31 @@ export async function runMaintenance(now = new Date()): Promise<MaintenanceSumma
+       if (!claim) continue;
+       cleanupClaimed += 1;
+       await deleteExactStoredObject(claim.objectPath);
+-      deleted += 1;
++      if (claim.cleanupClaimId && await finalizeExpiredUploadObject(claim.jobId, claim.cleanupClaimId)) {
++        deleted += 1;
++      }
++    } catch {
++      cleanupFailed += 1;
++    }
++  }
++
++  let deletionRecovered = 0;
++  for (const claim of deletionPage.claims) {
++    try {
++      await deleteStoredJobFiles(claim.job);
++      if (await finalizeJobDeletion(claim.job.jobId, claim.claimId)) deletionRecovered += 1;
+     } catch {
+       cleanupFailed += 1;
+     }
+   }
+ 
+   return {
+-    attempted: recoveryPage.jobs.length + cleanupPage.sessions.length,
+-    recovered: enqueued + deleted,
++    attempted: recoveryPage.jobs.length + cleanupPage.sessions.length + deletionPage.claims.length,
++    recovered: enqueued + deleted + deletionRecovered,
+     skipped: cleanupPage.sessions.length - cleanupClaimed,
+     failed: recoveryFailed + cleanupFailed,
+-    hasMore: Boolean(recoveryPage.nextCursor || cleanupPage.hasMore),
++    hasMore: Boolean(recoveryPage.nextCursor || cleanupPage.hasMore || purgePage.hasMore || deletionPage.hasMore),
+     cleanupDiagnostics: { ...cleanupPage.cleanupDiagnostics, claimed: cleanupClaimed },
++    metadataPurged: purgePage.purged,
+   };
+ }

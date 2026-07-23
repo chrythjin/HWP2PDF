@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { FieldPath, Firestore } from "@google-cloud/firestore";
 import {
   TOMBSTONE_RETENTION_MS,
@@ -50,13 +49,11 @@ export interface JobRecord {
   deletedBy?: string;
   /** Tombstone retention deadline; after this the metadata row may be purged. */
   tombstoneUntil?: string;
-  /** Internal marker retained until physical storage cleanup succeeds. */
-  cleanupPending?: boolean;
 }
 
 export type CreateJobInput = Omit<JobRecord, "createdAt" | "updatedAt">;
 export type UpdateJobPatch = Partial<
-  Omit<JobRecord, "jobId" | "createdAt" | "ownerType" | "userId" | "accessTokenHash" | "metadataExpiresAt">
+  Omit<JobRecord, "jobId" | "createdAt" | "ownerType" | "userId" | "accessTokenHash">
 >;
 export type ClaimQueuedJobResult =
   | { status: "claimed"; job: JobRecord }
@@ -78,36 +75,7 @@ export type UploadSessionRecord = UploadSession & {
   status?: "active" | "completed" | "expired";
   expiredAt?: string;
   cleanupClaimedAt?: string;
-  cleanupClaimId?: string;
-  cleanupLeaseExpiresAt?: string;
-  completionClaimId?: string;
-  completionLeaseExpiresAt?: string;
 };
-
-export const PERSISTENT_CLAIM_LEASE_MS = 5 * 60_000;
-
-export type UploadSessionCompletionClaimResult =
-  | { status: "claimed"; session: UploadSessionRecord; existingJob?: JobRecord }
-  | { status: "not_found" }
-  | { status: "completed"; session: UploadSessionRecord }
-  | { status: "expired"; session: UploadSessionRecord }
-  | { status: "conflict"; session: UploadSessionRecord }
-  | { status: "already_claimed"; session: UploadSessionRecord };
-
-export type JobDeletionClaimResult =
-  | { status: "claimed"; job: JobRecord; tombstone: JobRecord; claimId: string }
-  | { status: "not_found" }
-  | { status: "forbidden" }
-  | { status: "processing"; job: JobRecord }
-  | { status: "in_progress"; tombstone: JobRecord }
-  | { status: "already_deleted"; tombstone: JobRecord };
-
-export interface JobDeletionCleanupRecord {
-  jobId: string;
-  claimId: string;
-  leaseExpiresAt: string;
-  job: JobRecord;
-}
 
 export interface MaintenancePageOptions {
   cutoff: Date;
@@ -118,16 +86,6 @@ export interface MaintenancePageOptions {
 export interface RecoveredJobsPage {
   jobs: JobRecord[];
   nextCursor?: string;
-}
-
-export interface PurgedJobsPage {
-  purged: number;
-  hasMore: boolean;
-}
-
-export interface JobDeletionCleanupPage {
-  claims: Array<{ job: JobRecord; claimId: string }>;
-  hasMore: boolean;
 }
 
 export interface ExpiredUploadSessionsPage {
@@ -164,19 +122,7 @@ function classifyUploadCleanupCandidate(
   cutoff: Date,
 ): CleanupDecision {
   if (current.completedAt || current.status === "completed") return "completedOrStatus";
-  if (current.cleanupClaimId && Date.parse(current.cleanupLeaseExpiresAt ?? "") > cutoff.getTime()) {
-    return "alreadyClaimed";
-  }
-  if (
-    !current.cleanupClaimId
-    && current.cleanupClaimedAt
-    && Date.parse(current.cleanupClaimedAt) + PERSISTENT_CLAIM_LEASE_MS > cutoff.getTime()
-  ) {
-    return "alreadyClaimed";
-  }
-  if (current.completionClaimId && Date.parse(current.completionLeaseExpiresAt ?? "") > cutoff.getTime()) {
-    return "alreadyClaimed";
-  }
+  if (current.cleanupClaimedAt) return "alreadyClaimed";
   const expiresAt = Date.parse(current.expiresAt);
   if (!Number.isFinite(expiresAt)) return "invalidExpiry";
   if (expiresAt > cutoff.getTime()) return "expiryAfterCutoff";
@@ -223,30 +169,7 @@ function hasSameUploadCleanupIdentity(current: UploadSessionRecord, candidate: U
 }
 
 function isUploadCleanupEligible(session: UploadSessionRecord) {
-  const legacyLeaseExpiresAt = session.cleanupClaimedAt
-    ? Date.parse(session.cleanupClaimedAt) + PERSISTENT_CLAIM_LEASE_MS
-    : Number.NEGATIVE_INFINITY;
-  return session.status === "expired"
-    && !session.completedAt
-    && (
-      session.cleanupClaimId
-        ? Date.parse(session.cleanupLeaseExpiresAt ?? "") <= Date.now()
-        : legacyLeaseExpiresAt <= Date.now()
-    );
-}
-
-function leaseExpiresAt(now = new Date()) {
-  return new Date(now.getTime() + PERSISTENT_CLAIM_LEASE_MS).toISOString();
-}
-
-function hasSameUploadJobIdentity(job: JobRecord, session: UploadSessionRecord) {
-  return job.jobId === session.jobId
-    && job.originalFileName === session.fileName
-    && job.originalFileSize === session.fileSize
-    && job.originalObjectPath === session.objectPath
-    && job.ownerType === session.ownerType
-    && job.userId === session.userId
-    && job.accessTokenHash === session.accessTokenHash;
+  return session.status === "expired" && !session.completedAt && !session.cleanupClaimedAt;
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +244,7 @@ function toDeletedJob(current: JobRecord, deletedBy: string): JobRecord {
     status: "deleted",
     progress: 0,
     expiresAt: current.expiresAt,
+    ...(current.metadataExpiresAt !== undefined ? { metadataExpiresAt: current.metadataExpiresAt } : {}),
     ownerType: current.ownerType,
     userId: current.userId,
     createdAt: current.createdAt,
@@ -328,42 +252,7 @@ function toDeletedJob(current: JobRecord, deletedBy: string): JobRecord {
     deletedAt: nowIso,
     deletedBy,
     tombstoneUntil: new Date(now.getTime() + TOMBSTONE_RETENTION_MS).toISOString(),
-    cleanupPending: true,
   };
-}
-
-function applyJobPatch(current: JobRecord, patch: UpdateJobPatch): JobRecord {
-  const runtimePatch = patch as UpdateJobPatch & { metadataExpiresAt?: unknown };
-  const { metadataExpiresAt: _ignoredMetadataExpiry, ...safePatch } = runtimePatch;
-  return { ...current, ...safePatch, updatedAt: new Date().toISOString() };
-}
-
-function toFinalizedTombstone(current: JobRecord): JobRecord {
-  const { cleanupPending: _cleanupPending, ...tombstone } = current;
-  return {
-    ...tombstone,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-function finalizedDeletionResult(current: JobRecord | undefined, cleanup: JobDeletionCleanupRecord): JobRecord {
-  if (current) return toFinalizedTombstone(current);
-  return toFinalizedTombstone(toDeletedJob(cleanup.job, cleanup.job.userId ?? "system"));
-}
-
-function classifyJobDeletion(current: JobRecord | undefined, deletedBy: string): Exclude<JobDeletionClaimResult, { status: "claimed" }> | null {
-  if (!current) return { status: "not_found" };
-  if (isDeleted(current)) {
-    return current.cleanupPending
-      ? { status: "in_progress", tombstone: current }
-      : { status: "already_deleted", tombstone: current };
-  }
-  if (deletedBy !== "system" && (current.ownerType !== "user" || current.userId !== deletedBy)) {
-    return { status: "forbidden" };
-  }
-  if (deletedBy !== "system" && isMetadataExpired(current)) return { status: "not_found" };
-  if (current.status === "processing") return { status: "processing", job: current };
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,21 +283,14 @@ interface JobStore {
   getJobForUser(jobId: string, userId: string): Promise<JobRecord | null>;
   getJobForAnonymous(jobId: string, accessTokenHash: string): Promise<JobRecord | null>;
   listJobsByUser(userId: string, options?: ListJobsByUserOptions): Promise<JobRecord[]>;
-  claimJobDeletion(jobId: string, deletedBy: string, claimId: string): Promise<JobDeletionClaimResult>;
-  finalizeJobDeletion(jobId: string, claimId: string): Promise<JobRecord | null>;
-  claimExpiredJobDeletions(options: MaintenancePageOptions): Promise<JobDeletionCleanupPage>;
   markJobDeleted(jobId: string, deletedBy: string): Promise<JobRecord | null>;
-  purgeExpiredJobs(options: MaintenancePageOptions): Promise<PurgedJobsPage>;
 
   // --- UploadSession CRUD ---
   createUploadSession(session: UploadSessionRecord): Promise<UploadSessionRecord>;
   getUploadSession(jobId: string): Promise<UploadSessionRecord | null>;
-  claimUploadSessionForCompletion(jobId: string, claimId: string): Promise<UploadSessionCompletionClaimResult>;
-  releaseUploadSessionCompletion(jobId: string, claimId: string): Promise<void>;
-  completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>, claimId?: string): Promise<UploadSessionRecord | null>;
+  completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>): Promise<UploadSessionRecord | null>;
   expireUploadSessionsForCleanup(options: MaintenancePageOptions): Promise<ExpiredUploadSessionsPage>;
   claimExpiredUploadObject(candidate: UploadSessionRecord): Promise<UploadSessionRecord | null>;
-  finalizeExpiredUploadObject(jobId: string, claimId: string): Promise<boolean>;
   expireUploadSessions(before?: Date): Promise<number>;
 }
 
@@ -419,12 +301,8 @@ interface JobStore {
 export class MemoryJobStore implements JobStore {
   private readonly jobs = new Map<string, JobRecord>();
   private readonly uploadSessions = new Map<string, UploadSessionRecord>();
-  private readonly deletionCleanup = new Map<string, JobDeletionCleanupRecord>();
 
   async createJob(input: CreateJobInput) {
-    if (this.jobs.has(input.jobId)) {
-      throw new Error("Job already exists");
-    }
     const now = new Date().toISOString();
     const job: JobRecord = {
       ...input,
@@ -441,7 +319,7 @@ export class MemoryJobStore implements JobStore {
     if (!job) return undefined;
 
     // Deleted jobs are not auto-expired; they are tombstones.
-    if (isDeleted(job)) return isTombstonePurged(job) ? undefined : job;
+    if (isDeleted(job)) return job;
 
     if (job.status === "expired" || !isExpired(job)) return job;
 
@@ -459,7 +337,11 @@ export class MemoryJobStore implements JobStore {
       return current;
     }
 
-    const updated = applyJobPatch(current, patch);
+    const updated: JobRecord = {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
 
     this.jobs.set(jobId, updated);
     return updated;
@@ -490,7 +372,7 @@ export class MemoryJobStore implements JobStore {
     const cutoffIso = options.cutoff.toISOString();
     const cursor = parseMaintenanceCursor(options.cursor);
     const candidates = Array.from(this.jobs.values())
-      .filter((job) => (job.status === "processing" || job.status === "queued") && job.updatedAt < cutoffIso)
+      .filter((job) => job.status === "processing" && job.updatedAt < cutoffIso)
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.jobId.localeCompare(b.jobId))
       .filter((job) => isAfterMaintenanceCursor(job.updatedAt, job.jobId, cursor))
       .slice(0, Math.max(0, options.limit));
@@ -498,9 +380,8 @@ export class MemoryJobStore implements JobStore {
     for (const candidate of candidates) {
       await beforeCommit?.(candidate.jobId);
       const current = this.jobs.get(candidate.jobId);
-      if (!current || (current.status !== "processing" && current.status !== "queued") || current.updatedAt !== candidate.updatedAt || current.updatedAt >= cutoffIso) continue;
-      const recoveredAt = new Date(Math.max(Date.now(), options.cutoff.getTime() + 1)).toISOString();
-      const recovered = { ...current, status: "queued" as const, progress: 60, message: "대기 중인 작업이 재시도 대기열에 재등록되었습니다.", updatedAt: recoveredAt };
+      if (!current || current.status !== "processing" || current.updatedAt !== candidate.updatedAt || current.updatedAt >= cutoffIso) continue;
+      const recovered = { ...current, status: "queued" as const, progress: 60, message: "대기 중인 작업이 재시도 대기열에 재등록되었습니다.", updatedAt: new Date().toISOString() };
       this.jobs.set(candidate.jobId, recovered);
       jobs.push(recovered);
     }
@@ -513,7 +394,6 @@ export class MemoryJobStore implements JobStore {
     if (!job) return null;
     if (isDeleted(job)) return null;
     if (job.ownerType !== "user" || job.userId !== userId) return null;
-    if (isMetadataExpired(job)) return null;
 
     // Auto-expire download if needed.
     if (job.status !== "expired" && isExpired(job)) {
@@ -552,7 +432,6 @@ export class MemoryJobStore implements JobStore {
         if (isTombstonePurged(job)) return false;
         return true;
       }
-      if (isMetadataExpired(job)) return false;
       return true;
     });
 
@@ -564,70 +443,17 @@ export class MemoryJobStore implements JobStore {
     return jobs.slice(start, end);
   }
 
-  async claimJobDeletion(jobId: string, deletedBy: string, claimId: string) {
-    const current = this.jobs.get(jobId);
-    const result = classifyJobDeletion(current, deletedBy);
-    if (result?.status === "in_progress") {
-      if (result.tombstone.ownerType !== "user" || result.tombstone.userId !== deletedBy) {
-        return { status: "forbidden" } as const;
-      }
-      const cleanup = this.deletionCleanup.get(jobId);
-      if (!cleanup) return result;
-      if (Date.parse(cleanup.leaseExpiresAt) > Date.now()) return result;
-      const deadline = leaseExpiresAt();
-      this.deletionCleanup.set(jobId, { ...cleanup, claimId, leaseExpiresAt: deadline });
-      return { status: "claimed", job: cleanup.job, tombstone: result.tombstone, claimId } as const;
-    }
-    if (result) return result;
-    if (!current) return { status: "not_found" } as const;
-    const deadline = leaseExpiresAt();
-    const tombstone = toDeletedJob(current, deletedBy);
-    this.jobs.set(jobId, tombstone);
-    this.deletionCleanup.set(jobId, { jobId, claimId, leaseExpiresAt: deadline, job: current });
-    return { status: "claimed", job: current, tombstone, claimId } as const;
-  }
-
   async markJobDeleted(jobId: string, deletedBy: string) {
-    const result = await this.claimJobDeletion(jobId, deletedBy, crypto.randomUUID());
-    if (result.status === "claimed") return this.finalizeJobDeletion(jobId, result.claimId);
-    if (result.status === "already_deleted") return result.tombstone;
-    return null;
-  }
-
-  async finalizeJobDeletion(jobId: string, claimId: string) {
     const current = this.jobs.get(jobId);
-    const cleanup = this.deletionCleanup.get(jobId);
-    if (!cleanup || cleanup.claimId !== claimId || (current && !isDeleted(current))) return null;
-    const finalized = finalizedDeletionResult(current, cleanup);
-    if (current) this.jobs.set(jobId, finalized);
-    this.deletionCleanup.delete(jobId);
-    return finalized;
-  }
+    if (!current) return null;
+    if (isDeleted(current)) return current;
+    if (deletedBy !== "system" && (current.ownerType !== "user" || current.userId !== deletedBy)) return null;
+    if (current.status === "processing") return null;
 
-  async claimExpiredJobDeletions(options: MaintenancePageOptions) {
-    const candidates = Array.from(this.deletionCleanup.values())
-      .filter((cleanup) => Date.parse(cleanup.leaseExpiresAt) <= options.cutoff.getTime())
-      .sort((a, b) => a.leaseExpiresAt.localeCompare(b.leaseExpiresAt) || a.jobId.localeCompare(b.jobId));
-    const selected = candidates.slice(0, Math.max(0, options.limit));
-    const claims = selected.map((cleanup) => {
-      const claimId = crypto.randomUUID();
-      this.deletionCleanup.set(cleanup.jobId, { ...cleanup, claimId, leaseExpiresAt: leaseExpiresAt() });
-      return { job: cleanup.job, claimId };
-    });
-    return { claims, hasMore: candidates.length > selected.length };
-  }
+    const deletedJob = toDeletedJob(current, deletedBy);
 
-  async purgeExpiredJobs(options: MaintenancePageOptions) {
-    const cutoff = options.cutoff.getTime();
-    const candidates = Array.from(this.jobs.values())
-      .filter((job) => {
-        const deadline = isDeleted(job) ? job.tombstoneUntil : job.metadataExpiresAt;
-        return deadline !== undefined && Date.parse(deadline) <= cutoff;
-      })
-      .sort((a, b) => a.jobId.localeCompare(b.jobId));
-    const selected = candidates.slice(0, Math.max(0, options.limit));
-    for (const job of selected) this.jobs.delete(job.jobId);
-    return { purged: selected.length, hasMore: candidates.length > selected.length };
+    this.jobs.set(jobId, deletedJob);
+    return deletedJob;
   }
 
   // --- UploadSession CRUD ---
@@ -642,60 +468,17 @@ export class MemoryJobStore implements JobStore {
     return session ?? null;
   }
 
-  async claimUploadSessionForCompletion(jobId: string, claimId: string) {
-    const current = this.uploadSessions.get(jobId);
-    if (!current) return { status: "not_found" } as const;
-    if (current.completedAt || current.status === "completed") {
-      return { status: "completed", session: current } as const;
-    }
-    const existingJob = this.jobs.get(jobId);
-    if (existingJob && !hasSameUploadJobIdentity(existingJob, current)) {
-      return { status: "conflict", session: current } as const;
-    }
-    if (current.cleanupClaimedAt) return { status: "expired", session: current } as const;
-    if (current.completionClaimId && Date.parse(current.completionLeaseExpiresAt ?? "") > Date.now()) {
-      return { status: "already_claimed", session: current } as const;
-    }
-    if (!existingJob && (current.status === "expired" || Date.parse(current.expiresAt) <= Date.now())) {
-      return { status: "expired", session: current } as const;
-    }
-    const claimed = {
-      ...current,
-      status: "active" as const,
-      expiredAt: undefined,
-      completionClaimId: claimId,
-      completionLeaseExpiresAt: leaseExpiresAt(),
-    };
-    this.uploadSessions.set(jobId, claimed);
-    return { status: "claimed", session: claimed, existingJob } as const;
-  }
-
-  async releaseUploadSessionCompletion(jobId: string, claimId: string) {
-    const current = this.uploadSessions.get(jobId);
-    if (!current || current.completionClaimId !== claimId || current.completedAt) return;
-    const {
-      completionClaimId: _completionClaimId,
-      completionLeaseExpiresAt: _completionLeaseExpiresAt,
-      ...released
-    } = current;
-    this.uploadSessions.set(jobId, released);
-  }
-
-  async completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>, claimId?: string) {
+  async completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>) {
     const current = this.uploadSessions.get(jobId);
     if (!current) return null;
-    if (!claimId || current.completionClaimId !== claimId) return null;
 
     const completed: UploadSessionRecord = {
       ...current,
       ...updates,
-      completionClaimId: undefined,
-      completionLeaseExpiresAt: undefined,
-      status: "completed",
       completedAt: new Date().toISOString(),
     };
 
-    this.uploadSessions.delete(jobId);
+    this.uploadSessions.set(jobId, completed);
     return completed;
   }
 
@@ -711,11 +494,6 @@ export class MemoryJobStore implements JobStore {
     const sessions: UploadSessionRecord[] = [];
     const cleanupDiagnostics = emptyCleanupDiagnostics();
     for (const candidate of candidates) {
-      const existingJob = this.jobs.get(candidate.jobId);
-      if (existingJob && hasSameUploadJobIdentity(existingJob, candidate)) {
-        cleanupDiagnostics.completedOrStatus += 1;
-        continue;
-      }
       const outcome = classifyUploadCleanupCandidate(candidate, candidate, options.cutoff);
       if (typeof outcome === "string") {
         cleanupDiagnostics[outcome] += 1;
@@ -739,24 +517,10 @@ export class MemoryJobStore implements JobStore {
   async claimExpiredUploadObject(candidate: UploadSessionRecord) {
     const current = this.uploadSessions.get(candidate.jobId);
     if (!current || !isUploadCleanupEligible(current)) return null;
-    const existingJob = this.jobs.get(candidate.jobId);
-    if (existingJob && hasSameUploadJobIdentity(existingJob, current)) return null;
     if (!hasSameUploadCleanupIdentity(current, candidate)) return null;
-    const claimed = {
-      ...current,
-      cleanupClaimedAt: new Date().toISOString(),
-      cleanupClaimId: crypto.randomUUID(),
-      cleanupLeaseExpiresAt: leaseExpiresAt(),
-    };
+    const claimed = { ...current, cleanupClaimedAt: new Date().toISOString() };
     this.uploadSessions.set(current.jobId, claimed);
     return claimed;
-  }
-
-  async finalizeExpiredUploadObject(jobId: string, claimId: string) {
-    const current = this.uploadSessions.get(jobId);
-    if (!current || current.cleanupClaimId !== claimId) return false;
-    this.uploadSessions.delete(jobId);
-    return true;
   }
 
   async expireUploadSessions(before = new Date()) {
@@ -774,7 +538,6 @@ export class FirestoreJobStore implements JobStore {
 
   private readonly collection;
   private readonly sessionsCollection;
-  private readonly deletionCleanupCollection;
 
   constructor(firestore?: Firestore) {
     this.firestore = firestore ?? new Firestore({
@@ -786,9 +549,6 @@ export class FirestoreJobStore implements JobStore {
     this.sessionsCollection = this.firestore.collection(
       process.env.FIRESTORE_UPLOAD_SESSIONS_COLLECTION ?? "uploadSessions",
     );
-    this.deletionCleanupCollection = this.firestore.collection(
-      process.env.FIRESTORE_JOB_DELETION_CLEANUP_COLLECTION ?? "jobDeletionCleanup",
-    );
   }
 
   async createJob(input: CreateJobInput) {
@@ -799,13 +559,8 @@ export class FirestoreJobStore implements JobStore {
       updatedAt: now,
     };
 
-    const ref = this.collection.doc(job.jobId);
-    return this.firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(ref);
-      if (snapshot.exists) throw new Error("Job already exists");
-      transaction.create(ref, job);
-      return job;
-    });
+    await this.collection.doc(job.jobId).set(job);
+    return job;
   }
 
   async getJob(jobId: string) {
@@ -816,7 +571,7 @@ export class FirestoreJobStore implements JobStore {
     const job = snapshot.data() as JobRecord;
 
     // Deleted jobs are not auto-expired; they are tombstones.
-    if (isDeleted(job)) return isTombstonePurged(job) ? undefined : job;
+    if (isDeleted(job)) return job;
 
     if (job.status === "expired" || !isExpired(job)) return job;
 
@@ -834,7 +589,11 @@ export class FirestoreJobStore implements JobStore {
       const current = snapshot.data() as JobRecord;
       if (isDeleted(current)) return current;
 
-      const updated = applyJobPatch(current, patch);
+      const updated: JobRecord = {
+        ...current,
+        ...patch,
+        updatedAt: new Date().toISOString(),
+      };
       transaction.set(ref, updated);
       return updated;
     });
@@ -860,46 +619,32 @@ export class FirestoreJobStore implements JobStore {
   }
 
   async recoverStaleProcessingJobs(options: MaintenancePageOptions, beforeCommit?: MaintenanceMutationHook) {
-    const buildQuery = (status: "processing" | "queued") => {
-      let query: FirebaseFirestore.Query = this.collection
-        .where("status", "==", status)
-        .where("updatedAt", "<", options.cutoff.toISOString())
-        .orderBy("updatedAt", "asc")
-        .orderBy(FieldPath.documentId(), "asc");
-      const cursor = parseMaintenanceCursor(options.cursor);
-      if (cursor) query = query.startAfter(...cursor);
-      return query.limit(Math.max(0, options.limit));
-    };
+    let query: FirebaseFirestore.Query = this.collection
+      .where("status", "==", "processing")
+      .where("updatedAt", "<", options.cutoff.toISOString())
+      .orderBy("updatedAt", "asc")
+      .orderBy(FieldPath.documentId(), "asc");
     const cursor = parseMaintenanceCursor(options.cursor);
-    void cursor;
-    const snapshots = await Promise.all([buildQuery("processing").get(), buildQuery("queued").get()]);
-    const docs = snapshots
-      .flatMap((snapshot) => snapshot.docs)
-      .sort((a, b) => {
-        const aJob = a.data() as JobRecord;
-        const bJob = b.data() as JobRecord;
-        return aJob.updatedAt.localeCompare(bJob.updatedAt) || a.id.localeCompare(b.id);
-      })
-      .slice(0, Math.max(0, options.limit));
+    if (cursor) query = query.startAfter(...cursor);
+    const snapshot = await query.limit(Math.max(0, options.limit)).get();
     const jobs: JobRecord[] = [];
-    for (const doc of docs) {
+    for (const doc of snapshot.docs) {
       await beforeCommit?.(doc.id);
       const recovered = await this.firestore.runTransaction(async (transaction) => {
         const currentSnapshot = await transaction.get(doc.ref);
         if (!currentSnapshot.exists) return null;
         const current = currentSnapshot.data() as JobRecord;
         const scanned = doc.data() as JobRecord;
-        if ((current.status !== "processing" && current.status !== "queued") || current.updatedAt !== scanned.updatedAt || current.updatedAt >= options.cutoff.toISOString()) return null;
-        const recoveredAt = new Date(Math.max(Date.now(), options.cutoff.getTime() + 1)).toISOString();
-        const value = { ...current, status: "queued" as const, progress: 60, message: "대기 중인 작업이 재시도 대기열에 재등록되었습니다.", updatedAt: recoveredAt };
+        if (current.status !== "processing" || current.updatedAt !== scanned.updatedAt || current.updatedAt >= options.cutoff.toISOString()) return null;
+        const value = { ...current, status: "queued" as const, progress: 60, message: "대기 중인 작업이 재시도 대기열에 재등록되었습니다.", updatedAt: new Date().toISOString() };
         transaction.set(doc.ref, value);
         return value;
       });
       if (recovered) jobs.push(recovered);
     }
-    const last = docs.at(-1);
+    const last = snapshot.docs.at(-1);
     const lastJob = last?.data() as JobRecord | undefined;
-    return { jobs, nextCursor: docs.length === options.limit && last && lastJob ? maintenanceCursor(lastJob.updatedAt, last.id) : undefined };
+    return { jobs, nextCursor: snapshot.size === options.limit && last && lastJob ? maintenanceCursor(lastJob.updatedAt, last.id) : undefined };
   }
 
   async getJobForUser(jobId: string, userId: string) {
@@ -910,7 +655,6 @@ export class FirestoreJobStore implements JobStore {
     const job = snapshot.data() as JobRecord;
     if (isDeleted(job)) return null;
     if (job.ownerType !== "user" || job.userId !== userId) return null;
-    if (isMetadataExpired(job)) return null;
 
     if (job.status !== "expired" && isExpired(job)) {
       const expiredJob = toExpiredJob(job);
@@ -954,8 +698,8 @@ export class FirestoreJobStore implements JobStore {
     let jobs = snapshot.docs.map((doc) => doc.data() as JobRecord);
 
     jobs = includeDeleted
-      ? jobs.filter((job) => isDeleted(job) ? !isTombstonePurged(job) : !isMetadataExpired(job))
-      : jobs.filter((job) => !isDeleted(job) && !isMetadataExpired(job));
+      ? jobs.filter((job) => !isDeleted(job) || !isTombstonePurged(job))
+      : jobs.filter((job) => !isDeleted(job));
 
     // Apply offset in memory (Firestore offset() is less efficient).
     if (offset > 0) {
@@ -969,120 +713,21 @@ export class FirestoreJobStore implements JobStore {
     return jobs;
   }
 
-  async claimJobDeletion(jobId: string, deletedBy: string, claimId: string) {
-    const ref = this.collection.doc(jobId);
-    const cleanupRef = this.deletionCleanupCollection.doc(jobId);
-    return this.firestore.runTransaction(async (transaction) => {
-      const [snapshot, cleanupSnapshot] = await Promise.all([
-        transaction.get(ref),
-        transaction.get(cleanupRef),
-      ]);
-      const current = snapshot.exists ? snapshot.data() as JobRecord : undefined;
-      const result = classifyJobDeletion(current, deletedBy);
-      if (result?.status === "in_progress") {
-        if (result.tombstone.ownerType !== "user" || result.tombstone.userId !== deletedBy) {
-          return { status: "forbidden" } as const;
-        }
-        if (!cleanupSnapshot.exists) return result;
-        const cleanup = cleanupSnapshot.data() as JobDeletionCleanupRecord;
-        if (Date.parse(cleanup.leaseExpiresAt) > Date.now()) return result;
-        const deadline = leaseExpiresAt();
-        transaction.set(cleanupRef, { ...cleanup, claimId, leaseExpiresAt: deadline });
-        return { status: "claimed", job: cleanup.job, tombstone: result.tombstone, claimId } as const;
-      }
-      if (result) return result;
-      if (!current) return { status: "not_found" } as const;
-      const deadline = leaseExpiresAt();
-      const tombstone = toDeletedJob(current, deletedBy);
-      transaction.set(ref, tombstone);
-      transaction.set(cleanupRef, { jobId, claimId, leaseExpiresAt: deadline, job: current });
-      return { status: "claimed", job: current, tombstone, claimId } as const;
-    });
-  }
-
   async markJobDeleted(jobId: string, deletedBy: string) {
-    const result = await this.claimJobDeletion(jobId, deletedBy, crypto.randomUUID());
-    if (result.status === "claimed") return this.finalizeJobDeletion(jobId, result.claimId);
-    if (result.status === "already_deleted") return result.tombstone;
-    return null;
-  }
-
-  async finalizeJobDeletion(jobId: string, claimId: string) {
     const ref = this.collection.doc(jobId);
-    const cleanupRef = this.deletionCleanupCollection.doc(jobId);
     return this.firestore.runTransaction(async (transaction) => {
-      const [snapshot, cleanupSnapshot] = await Promise.all([
-        transaction.get(ref),
-        transaction.get(cleanupRef),
-      ]);
-      if (!cleanupSnapshot.exists) return null;
-      const current = snapshot.exists ? snapshot.data() as JobRecord : undefined;
-      const cleanup = cleanupSnapshot.data() as JobDeletionCleanupRecord;
-      if ((current && !isDeleted(current)) || cleanup.claimId !== claimId) return null;
-      const finalized = finalizedDeletionResult(current, cleanup);
-      if (current) transaction.set(ref, finalized);
-      transaction.delete(cleanupRef);
-      return finalized;
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return null;
+
+      const current = snapshot.data() as JobRecord;
+      if (isDeleted(current)) return current;
+      if (deletedBy !== "system" && (current.ownerType !== "user" || current.userId !== deletedBy)) return null;
+      if (current.status === "processing") return null;
+
+      const deletedJob = toDeletedJob(current, deletedBy);
+      transaction.set(ref, deletedJob);
+      return deletedJob;
     });
-  }
-
-  async claimExpiredJobDeletions(options: MaintenancePageOptions) {
-    const snapshot = await this.deletionCleanupCollection
-      .where("leaseExpiresAt", "<=", options.cutoff.toISOString())
-      .orderBy("leaseExpiresAt", "asc")
-      .limit(Math.max(0, options.limit) + 1)
-      .get();
-    const selected = snapshot.docs.slice(0, Math.max(0, options.limit));
-    const claims: Array<{ job: JobRecord; claimId: string }> = [];
-    for (const candidate of selected) {
-      const claimed = await this.firestore.runTransaction(async (transaction) => {
-        const currentSnapshot = await transaction.get(candidate.ref);
-        if (!currentSnapshot.exists) return null;
-        const current = currentSnapshot.data() as JobDeletionCleanupRecord;
-        if (Date.parse(current.leaseExpiresAt) > options.cutoff.getTime()) return null;
-        const claimId = crypto.randomUUID();
-        transaction.set(candidate.ref, { ...current, claimId, leaseExpiresAt: leaseExpiresAt() });
-        return { job: current.job, claimId };
-      });
-      if (claimed) claims.push(claimed);
-    }
-    return { claims, hasMore: snapshot.size > selected.length };
-  }
-
-  async purgeExpiredJobs(options: MaintenancePageOptions) {
-    const cutoff = options.cutoff.toISOString();
-    const limit = Math.max(0, options.limit);
-    const [metadataSnapshot, tombstoneSnapshot] = await Promise.all([
-      this.collection.where("metadataExpiresAt", "<=", cutoff).orderBy("metadataExpiresAt", "asc").limit(limit + 1).get(),
-      this.collection.where("tombstoneUntil", "<=", cutoff).orderBy("tombstoneUntil", "asc").limit(limit + 1).get(),
-    ]);
-    const candidates = [...metadataSnapshot.docs, ...tombstoneSnapshot.docs]
-      .filter((doc, index, all) => all.findIndex((other) => other.id === doc.id) === index)
-      .sort((a, b) => {
-        const aJob = a.data() as JobRecord;
-        const bJob = b.data() as JobRecord;
-        const aDeadline = isDeleted(aJob) ? aJob.tombstoneUntil : aJob.metadataExpiresAt;
-        const bDeadline = isDeleted(bJob) ? bJob.tombstoneUntil : bJob.metadataExpiresAt;
-        return (aDeadline ?? "").localeCompare(bDeadline ?? "") || a.id.localeCompare(b.id);
-      });
-    const selected = candidates.slice(0, limit);
-    let purged = 0;
-    for (const candidate of selected) {
-      const deleted = await this.firestore.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(candidate.ref);
-        if (!snapshot.exists) return false;
-        const current = snapshot.data() as JobRecord;
-        const deadline = isDeleted(current) ? current.tombstoneUntil : current.metadataExpiresAt;
-        if (!deadline || Date.parse(deadline) > options.cutoff.getTime()) return false;
-        transaction.delete(candidate.ref);
-        return true;
-      });
-      if (deleted) purged += 1;
-    }
-    return {
-      purged,
-      hasMore: candidates.length > selected.length || metadataSnapshot.size > limit || tombstoneSnapshot.size > limit,
-    };
   }
 
   // --- UploadSession CRUD ---
@@ -1098,76 +743,20 @@ export class FirestoreJobStore implements JobStore {
     return snapshot.data() as UploadSessionRecord;
   }
 
-  async claimUploadSessionForCompletion(jobId: string, claimId: string) {
+  async completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>) {
     const ref = this.sessionsCollection.doc(jobId);
-    const jobRef = this.collection.doc(jobId);
-    return this.firestore.runTransaction(async (transaction) => {
-      const [snapshot, jobSnapshot] = await Promise.all([
-        transaction.get(ref),
-        transaction.get(jobRef),
-      ]);
-      if (!snapshot.exists) return { status: "not_found" } as const;
-      const current = snapshot.data() as UploadSessionRecord;
-      if (current.completedAt || current.status === "completed") {
-        return { status: "completed", session: current } as const;
-      }
-      const existingJob = jobSnapshot.exists ? jobSnapshot.data() as JobRecord : undefined;
-      if (existingJob && !hasSameUploadJobIdentity(existingJob, current)) {
-        return { status: "conflict", session: current } as const;
-      }
-      if (current.cleanupClaimedAt) return { status: "expired", session: current } as const;
-      if (current.completionClaimId && Date.parse(current.completionLeaseExpiresAt ?? "") > Date.now()) {
-        return { status: "already_claimed", session: current } as const;
-      }
-      if (!existingJob && (current.status === "expired" || Date.parse(current.expiresAt) <= Date.now())) {
-        return { status: "expired", session: current } as const;
-      }
-      const claimed = {
-        ...current,
-        status: "active" as const,
-        expiredAt: undefined,
-        completionClaimId: claimId,
-        completionLeaseExpiresAt: leaseExpiresAt(),
-      };
-      transaction.set(ref, claimed);
-      return { status: "claimed", session: claimed, existingJob } as const;
-    });
-  }
+    const snapshot = await ref.get();
+    if (!snapshot.exists) return null;
 
-  async releaseUploadSessionCompletion(jobId: string, claimId: string) {
-    const ref = this.sessionsCollection.doc(jobId);
-    await this.firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(ref);
-      if (!snapshot.exists) return;
-      const current = snapshot.data() as UploadSessionRecord;
-      if (current.completionClaimId !== claimId || current.completedAt) return;
-      const {
-        completionClaimId: _completionClaimId,
-        completionLeaseExpiresAt: _completionLeaseExpiresAt,
-        ...released
-      } = current;
-      transaction.set(ref, released);
-    });
-  }
+    const current = snapshot.data() as UploadSessionRecord;
+    const completed: UploadSessionRecord = {
+      ...current,
+      ...updates,
+      completedAt: new Date().toISOString(),
+    };
 
-  async completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>, claimId?: string) {
-    const ref = this.sessionsCollection.doc(jobId);
-    return this.firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(ref);
-      if (!snapshot.exists) return null;
-      const current = snapshot.data() as UploadSessionRecord;
-      if (!claimId || current.completionClaimId !== claimId) return null;
-      const completed: UploadSessionRecord = {
-        ...current,
-        ...updates,
-        completionClaimId: undefined,
-        completionLeaseExpiresAt: undefined,
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      };
-      transaction.delete(ref);
-      return completed;
-    });
+    await ref.set(completed);
+    return completed;
   }
 
   async expireUploadSessionsForCleanup(options: MaintenancePageOptions) {
@@ -1188,10 +777,6 @@ export class FirestoreJobStore implements JobStore {
         if (!currentSnapshot.exists) return "identityMismatch" as const;
         const current = currentSnapshot.data() as UploadSessionRecord;
         const scanned = doc.data() as UploadSessionRecord;
-        const jobSnapshot = await transaction.get(this.collection.doc(current.jobId));
-        if (jobSnapshot.exists && hasSameUploadJobIdentity(jobSnapshot.data() as JobRecord, current)) {
-          return "completedOrStatus" as const;
-        }
         const decision = classifyUploadCleanupCandidate(current, scanned, options.cutoff);
         if (typeof decision === "string" || current.status === "expired") return decision;
         const value = { ...current, status: "expired" as const, expiredAt: options.cutoff.toISOString() };
@@ -1222,28 +807,9 @@ export class FirestoreJobStore implements JobStore {
       const current = snapshot.data() as UploadSessionRecord;
       if (!isUploadCleanupEligible(current)) return null;
       if (!hasSameUploadCleanupIdentity(current, candidate)) return null;
-      const jobSnapshot = await transaction.get(this.collection.doc(current.jobId));
-      if (jobSnapshot.exists && hasSameUploadJobIdentity(jobSnapshot.data() as JobRecord, current)) return null;
-      const claimed = {
-        ...current,
-        cleanupClaimedAt: new Date().toISOString(),
-        cleanupClaimId: crypto.randomUUID(),
-        cleanupLeaseExpiresAt: leaseExpiresAt(),
-      };
+      const claimed = { ...current, cleanupClaimedAt: new Date().toISOString() };
       transaction.set(ref, claimed);
       return claimed;
-    });
-  }
-
-  async finalizeExpiredUploadObject(jobId: string, claimId: string) {
-    const ref = this.sessionsCollection.doc(jobId);
-    return this.firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(ref);
-      if (!snapshot.exists) return false;
-      const current = snapshot.data() as UploadSessionRecord;
-      if (current.cleanupClaimId !== claimId) return false;
-      transaction.delete(ref);
-      return true;
     });
   }
 
@@ -1287,24 +853,8 @@ export function listJobsByUser(userId: string, options?: ListJobsByUserOptions) 
   return selectedStore.listJobsByUser(userId, options);
 }
 
-export function claimJobDeletion(jobId: string, deletedBy: string, claimId = crypto.randomUUID()) {
-  return selectedStore.claimJobDeletion(jobId, deletedBy, claimId);
-}
-
 export function markJobDeleted(jobId: string, deletedBy: string) {
   return selectedStore.markJobDeleted(jobId, deletedBy);
-}
-
-export function finalizeJobDeletion(jobId: string, claimId: string) {
-  return selectedStore.finalizeJobDeletion(jobId, claimId);
-}
-
-export function claimExpiredJobDeletions(options: MaintenancePageOptions) {
-  return selectedStore.claimExpiredJobDeletions(options);
-}
-
-export function purgeExpiredJobs(options: MaintenancePageOptions) {
-  return selectedStore.purgeExpiredJobs(options);
 }
 
 export function createUploadSession(session: UploadSessionRecord) {
@@ -1315,16 +865,8 @@ export function getUploadSession(jobId: string) {
   return selectedStore.getUploadSession(jobId);
 }
 
-export function claimUploadSessionForCompletion(jobId: string, claimId: string) {
-  return selectedStore.claimUploadSessionForCompletion(jobId, claimId);
-}
-
-export function releaseUploadSessionCompletion(jobId: string, claimId: string) {
-  return selectedStore.releaseUploadSessionCompletion(jobId, claimId);
-}
-
-export function completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>, claimId?: string) {
-  return selectedStore.completeUploadSession(jobId, updates, claimId);
+export function completeUploadSession(jobId: string, updates?: Partial<UploadSessionRecord>) {
+  return selectedStore.completeUploadSession(jobId, updates);
 }
 
 export function expireUploadSessionsForCleanup(options: MaintenancePageOptions) {
@@ -1337,10 +879,6 @@ export function recoverStaleProcessingJobs(options: MaintenancePageOptions) {
 
 export function claimExpiredUploadObject(candidate: UploadSessionRecord) {
   return selectedStore.claimExpiredUploadObject(candidate);
-}
-
-export function finalizeExpiredUploadObject(jobId: string, claimId: string) {
-  return selectedStore.finalizeExpiredUploadObject(jobId, claimId);
 }
 
 export function expireUploadSessions(before?: Date) {

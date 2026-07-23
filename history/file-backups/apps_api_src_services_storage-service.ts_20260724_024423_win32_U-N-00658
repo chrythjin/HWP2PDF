@@ -222,7 +222,6 @@ export async function getStatusResponse(
     updatedAt: job.updatedAt,
     expiresAt: job.expiresAt,
     downloadExpiresAt: job.downloadExpiresAt,
-    metadataExpiresAt: job.status === "deleted" ? undefined : job.metadataExpiresAt,
     ...availability,
   };
 }
@@ -232,7 +231,9 @@ export async function getStatusResponse(
 // ---------------------------------------------------------------------------
 
 /**
- * Delete a GCS object without failing when the object is already absent.
+ * Best-effort delete a GCS object. Does not throw if the object is missing.
+ * Errors are logged with a generic message — object paths are never included
+ * in logs or thrown errors.
  */
 async function deleteGcsObject(objectPath: string | undefined): Promise<void> {
   if (!objectPath || !shouldUseGcs()) return;
@@ -249,7 +250,6 @@ async function deleteGcsObject(objectPath: string | undefined): Promise<void> {
         detail: detail.replace(objectPath, "[REDACTED_PATH]"),
       }),
     );
-    throw new Error("GCS object deletion failed", { cause: error });
   }
 }
 
@@ -258,7 +258,8 @@ export async function deleteExactStoredObject(objectPath: string): Promise<void>
 }
 
 /**
- * Delete a local file without failing when the file is already absent.
+ * Best-effort delete a local file. Does not throw if the file is missing.
+ * Errors are logged with a generic message — file paths are never included.
  */
 async function deleteLocalFile(localPath: string | undefined): Promise<void> {
   if (!localPath || shouldUseGcs()) return;
@@ -274,7 +275,6 @@ async function deleteLocalFile(localPath: string | undefined): Promise<void> {
         detail: detail.replace(localPath, "[REDACTED_PATH]"),
       }),
     );
-    throw new Error("Local file deletion failed", { cause: error });
   }
 }
 
@@ -284,8 +284,8 @@ async function deleteLocalFile(localPath: string | undefined): Promise<void> {
  *
  * - Does not throw if objects/files are missing.
  * - Does not leak object paths or file names in errors or logs.
- * - Each deletion is independent; all are attempted before any failure is
- *   returned to the caller.
+ * - Each deletion is best-effort and independent; a failure on one does not
+ *   prevent the others from being attempted.
  *
  * @param job - The job record whose files should be deleted.
  */

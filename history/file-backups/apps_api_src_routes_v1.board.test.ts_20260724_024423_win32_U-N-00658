@@ -344,31 +344,6 @@ describe("members-only board API and permission matrix (Todo 8)", () => {
         .send({ title: "Title", body: "Body" });
       expect(res.status).toBe(422);
     });
-
-    it("rejects a null JSON request body with 422", async () => {
-      const res = await request(app)
-        .post(API_ROUTES.BOARD_POSTS)
-        .set("Authorization", "Bearer valid-user-token")
-        .set("Content-Type", "application/json")
-        .send("null");
-
-      expect(res.status).toBe(422);
-    });
-
-    it.each([
-      { field: "title", value: 42 },
-      { field: "body", value: null },
-      { field: "category", value: ["general"] },
-    ])("rejects non-string $field with 422", async ({ field, value }) => {
-      const res = await createPostAs("valid-user-token", {
-        title: "Title",
-        body: "Body",
-        category: "general",
-        [field]: value,
-      });
-
-      expect(res.status).toBe(422);
-    });
   });
 
   // -----------------------------------------------------------------------
@@ -862,40 +837,6 @@ describe("members-only board API and permission matrix (Todo 8)", () => {
         .patch(`${API_ROUTES.BOARD_POSTS}/${postId}`)
         .set("Authorization", "Bearer valid-user-token")
         .send({ title: "a".repeat(121) });
-
-      expect(res.status).toBe(422);
-    });
-
-    it("rejects a null JSON update body with 422", async () => {
-      const createRes = await createPostAs("valid-user-token", {
-        title: "Original",
-        body: "Body",
-        category: "general",
-      });
-      const res = await request(app)
-        .patch(`${API_ROUTES.BOARD_POSTS}/${createRes.body.id}`)
-        .set("Authorization", "Bearer valid-user-token")
-        .set("Content-Type", "application/json")
-        .send("null");
-
-      expect(res.status).toBe(422);
-    });
-
-    it.each([
-      { field: "title", value: 42 },
-      { field: "body", value: null },
-      { field: "category", value: { value: "general" } },
-    ])("rejects non-string $field on update with 422", async ({ field, value }) => {
-      const createRes = await createPostAs("valid-user-token", {
-        title: "Original",
-        body: "Body",
-        category: "general",
-      });
-
-      const res = await request(app)
-        .patch(`${API_ROUTES.BOARD_POSTS}/${createRes.body.id}`)
-        .set("Authorization", "Bearer valid-user-token")
-        .send({ [field]: value });
 
       expect(res.status).toBe(422);
     });

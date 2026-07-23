@@ -45,12 +45,6 @@ function deriveAuthorName(user: { uid: string; email?: string; name?: string }):
   return user.name || user.email || "Member";
 }
 
-function parseObjectBody(body: unknown): Record<string, unknown> | null {
-  return body !== null && typeof body === "object" && !Array.isArray(body)
-    ? body as Record<string, unknown>
-    : null;
-}
-
 /**
  * Parse and validate the category query parameter for list requests.
  * Returns the validated category or undefined (no filter).
@@ -151,11 +145,7 @@ boardRouter.post(
         return;
       }
 
-      const body = parseObjectBody(request.body);
-      if (!body) {
-        next(new ApiError(422, "invalid_post", "게시글 요청 본문이 올바르지 않습니다."));
-        return;
-      }
+      const body = request.body as Partial<BoardCreatePostRequest>;
 
       // Validate title/body/category with length constraints.
       const validationError = validateBoardPostInput({
@@ -180,9 +170,9 @@ boardRouter.post(
 
       const post = await createBoardPost(
         {
-          title: body.title as string,
-          body: body.body as string,
-          category: body.category as BoardCategory,
+          title: body.title!,
+          body: body.body!,
+          category: body.category! as BoardCategory,
         },
         authorId,
         authorName,
@@ -210,11 +200,7 @@ boardRouter.patch(
       }
 
       const postId = getParam(request, "postId");
-      const body = parseObjectBody(request.body);
-      if (!body) {
-        next(new ApiError(422, "invalid_post", "게시글 요청 본문이 올바르지 않습니다."));
-        return;
-      }
+      const body = request.body as Partial<BoardUpdatePostRequest>;
 
       // Validate provided fields (partial update — only check present fields).
       if (body.title !== undefined || body.body !== undefined || body.category !== undefined) {
@@ -237,7 +223,7 @@ boardRouter.patch(
 
       const updated = await updateBoardPost(
         postId,
-        body as BoardUpdatePostRequest,
+        body,
         request.user.uid,
         request.user.admin,
         request.user.boardModerator,

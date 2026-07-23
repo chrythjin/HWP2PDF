@@ -1,11 +1,15 @@
 import { enqueueConversionJob } from "./cloud-tasks-dispatcher.js";
 import {
   claimExpiredUploadObject,
+  claimExpiredJobDeletions,
   type CleanupDiagnostics,
   expireUploadSessionsForCleanup,
+  finalizeExpiredUploadObject,
+  finalizeJobDeletion,
+  purgeExpiredJobs,
   recoverStaleProcessingJobs,
 } from "./job-store.js";
-import { deleteExactStoredObject } from "./storage-service.js";
+import { deleteExactStoredObject, deleteStoredJobFiles } from "./storage-service.js";
 
 export interface MaintenanceSummary {
   attempted: number;
@@ -14,6 +18,7 @@ export interface MaintenanceSummary {
   failed: number;
   hasMore: boolean;
   cleanupDiagnostics: CleanupDiagnostics & { claimed: number };
+  metadataPurged: number;
 }
 
 const MAX_CLEANUP_SCAN_PAGES = 10;
@@ -62,12 +67,14 @@ async function collectCleanupSessions(cutoff: Date, limit: number) {
 export async function runMaintenance(now = new Date()): Promise<MaintenanceSummary> {
   const limit = positiveInteger(process.env.MAINTENANCE_BATCH_LIMIT, 100);
   const staleMinutes = positiveInteger(process.env.STUCK_JOB_THRESHOLD_MINUTES, 10);
-  const [recoveryPage, cleanupPage] = await Promise.all([
+  const [recoveryPage, cleanupPage, purgePage, deletionPage] = await Promise.all([
     recoverStaleProcessingJobs({
       cutoff: new Date(now.getTime() - staleMinutes * 60_000),
       limit,
     }),
     collectCleanupSessions(now, limit),
+    purgeExpiredJobs({ cutoff: now, limit }),
+    claimExpiredJobDeletions({ cutoff: now, limit }),
   ]);
 
   let enqueued = 0;
@@ -90,18 +97,31 @@ export async function runMaintenance(now = new Date()): Promise<MaintenanceSumma
       if (!claim) continue;
       cleanupClaimed += 1;
       await deleteExactStoredObject(claim.objectPath);
-      deleted += 1;
+      if (claim.cleanupClaimId && await finalizeExpiredUploadObject(claim.jobId, claim.cleanupClaimId)) {
+        deleted += 1;
+      }
+    } catch {
+      cleanupFailed += 1;
+    }
+  }
+
+  let deletionRecovered = 0;
+  for (const claim of deletionPage.claims) {
+    try {
+      await deleteStoredJobFiles(claim.job);
+      if (await finalizeJobDeletion(claim.job.jobId, claim.claimId)) deletionRecovered += 1;
     } catch {
       cleanupFailed += 1;
     }
   }
 
   return {
-    attempted: recoveryPage.jobs.length + cleanupPage.sessions.length,
-    recovered: enqueued + deleted,
+    attempted: recoveryPage.jobs.length + cleanupPage.sessions.length + deletionPage.claims.length,
+    recovered: enqueued + deleted + deletionRecovered,
     skipped: cleanupPage.sessions.length - cleanupClaimed,
     failed: recoveryFailed + cleanupFailed,
-    hasMore: Boolean(recoveryPage.nextCursor || cleanupPage.hasMore),
+    hasMore: Boolean(recoveryPage.nextCursor || cleanupPage.hasMore || purgePage.hasMore || deletionPage.hasMore),
     cleanupDiagnostics: { ...cleanupPage.cleanupDiagnostics, claimed: cleanupClaimed },
+    metadataPurged: purgePage.purged,
   };
 }

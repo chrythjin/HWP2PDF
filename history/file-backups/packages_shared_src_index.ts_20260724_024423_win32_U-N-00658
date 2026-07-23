@@ -169,10 +169,6 @@ export interface DirectUploadInitResponse {
   objectPath: string;
   expiresAt: string;
   headers: Record<string, string>;
-  /** Plaintext anonymous token, returned exactly once for anonymous uploads. */
-  accessToken?: string;
-  /** Header name clients must use when presenting accessToken. */
-  accessTokenHeader?: string;
 }
 
 export interface DirectUploadCompleteRequest {

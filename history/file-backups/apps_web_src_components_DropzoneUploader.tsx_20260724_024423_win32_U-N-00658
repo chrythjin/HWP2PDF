@@ -65,6 +65,11 @@ type UploadResponseWithToken = UploadResponse & {
   accessTokenHeader?: string;
 };
 
+type DirectUploadInitResponseWithToken = DirectUploadInitResponse & {
+  accessToken?: string;
+  accessTokenHeader?: string;
+};
+
 export default function DropzoneUploader() {
   const { user } = useAuth();
   const [file, setFile] = useState<File | null>(null);
@@ -300,7 +305,7 @@ export default function DropzoneUploader() {
         });
       };
 
-      const uploadToSignedUrl = async (upload: DirectUploadInitResponse) => {
+      const uploadToSignedUrl = async (upload: DirectUploadInitResponseWithToken) => {
         await new Promise<void>((resolve, reject) => {
           const request = new XMLHttpRequest();
           request.open("PUT", upload.uploadUrl);
@@ -350,7 +355,7 @@ export default function DropzoneUploader() {
           throw new Error(readApiError(initText, "직접 업로드 URL을 만들지 못했습니다."));
         }
 
-        const directUpload = JSON.parse(initText) as DirectUploadInitResponse;
+        const directUpload = JSON.parse(initText) as DirectUploadInitResponseWithToken;
         await uploadToSignedUrl(directUpload);
 
         // Attach the anonymous access token to the complete request if present.
@@ -376,12 +381,7 @@ export default function DropzoneUploader() {
         }
 
         if (uploadSessionRef.current !== uploadSession) return;
-        const completedUpload = JSON.parse(completeText) as UploadResponseWithToken;
-        startPolling({
-          ...completedUpload,
-          accessToken: directUpload.accessToken,
-          accessTokenHeader: directUpload.accessTokenHeader,
-        });
+        startPolling(JSON.parse(completeText) as UploadResponseWithToken);
       } catch (error) {
         if (uploadSessionRef.current !== uploadSession) return;
         setStatus("failed");

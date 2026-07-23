@@ -108,7 +108,7 @@ vi.mock("../services/storage-service.js", async (importOriginal) => {
       if (job.status !== "completed") return undefined;
       return `http://localhost:8080/v1/jobs/${job.jobId}/download`;
     }),
-    // deleteStoredJobFiles is real (local mode → fs.rm best-effort) but we
+    // deleteStoredJobFiles is real (local mode ??fs.rm best-effort) but we
     // spy on it to verify it was called.
     deleteStoredJobFiles: vi.fn(actual.deleteStoredJobFiles),
   };
@@ -131,25 +131,17 @@ vi.mock("../services/job-store.js", async (importOriginal) => {
     getJobForAnonymous: (jobId: string, hash: string) => currentStore.getJobForAnonymous(jobId, hash),
     listJobsByUser: (userId: string, opts?: ListJobsByUserOptions) =>
       currentStore.listJobsByUser(userId, opts),
-    claimJobDeletion: (jobId: string, deletedBy: string, claimId: string) =>
-      currentStore.claimJobDeletion(jobId, deletedBy, claimId),
-    finalizeJobDeletion: (jobId: string, claimId: string) => currentStore.finalizeJobDeletion(jobId, claimId),
     markJobDeleted: (jobId: string, deletedBy: string) => currentStore.markJobDeleted(jobId, deletedBy),
     createUploadSession: (session: UploadSessionRecord) => currentStore.createUploadSession(session),
     getUploadSession: (jobId: string) => currentStore.getUploadSession(jobId),
-    claimUploadSessionForCompletion: (jobId: string, claimId: string) =>
-      currentStore.claimUploadSessionForCompletion(jobId, claimId),
-    releaseUploadSessionCompletion: (jobId: string, claimId: string) =>
-      currentStore.releaseUploadSessionCompletion(jobId, claimId),
-    completeUploadSession: (jobId: string, updates?: Partial<UploadSessionRecord>, claimId?: string) =>
-      currentStore.completeUploadSession(jobId, updates, claimId),
+    completeUploadSession: (jobId: string, updates?: Partial<UploadSessionRecord>) =>
+      currentStore.completeUploadSession(jobId, updates),
     expireUploadSessions: (before?: Date) => currentStore.expireUploadSessions(before),
   };
 });
 
-// Import after mock setup — these will resolve to the mocked versions.
+// Import after mock setup ??these will resolve to the mocked versions.
 const { createJob, getJob } = await import("../services/job-store.js");
-const { deleteStoredJobFiles } = await import("../services/storage-service.js");
 
 describe("member job history and deletion API (Todo 7)", () => {
   let app: Express;
@@ -181,10 +173,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // GET /v1/me/jobs — auth required
+  // GET /v1/me/jobs ??auth required
   // -----------------------------------------------------------------------
 
-  describe("GET /v1/me/jobs — auth required", () => {
+  describe("GET /v1/me/jobs ??auth required", () => {
     it("returns 401 without Authorization header", async () => {
       const res = await request(app).get(API_ROUTES.ME_JOBS);
       expect(res.status).toBe(401);
@@ -199,10 +191,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // GET /v1/me/jobs — list own jobs
+  // GET /v1/me/jobs ??list own jobs
   // -----------------------------------------------------------------------
 
-  describe("GET /v1/me/jobs — list own jobs", () => {
+  describe("GET /v1/me/jobs ??list own jobs", () => {
     it("returns 200 with only the caller's non-deleted jobs sorted by createdAt desc", async () => {
       const baseTime = Date.now();
 
@@ -268,7 +260,7 @@ describe("member job history and deletion API (Todo 7)", () => {
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body).toHaveLength(2);
-      // Sorted by createdAt desc → jobB (created later) first, jobA second.
+      // Sorted by createdAt desc ??jobB (created later) first, jobA second.
       expect(res.body[0].jobId).toBe("job-b");
       expect(res.body[1].jobId).toBe("job-a");
     });
@@ -331,10 +323,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // GET /v1/me/jobs/:jobId — auth required
+  // GET /v1/me/jobs/:jobId ??auth required
   // -----------------------------------------------------------------------
 
-  describe("GET /v1/me/jobs/:jobId — auth required", () => {
+  describe("GET /v1/me/jobs/:jobId ??auth required", () => {
     it("returns 401 without Authorization header", async () => {
       const res = await request(app).get(`${API_ROUTES.ME_JOBS}/some-id`);
       expect(res.status).toBe(401);
@@ -342,10 +334,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // GET /v1/me/jobs/:jobId — not found / other user
+  // GET /v1/me/jobs/:jobId ??not found / other user
   // -----------------------------------------------------------------------
 
-  describe("GET /v1/me/jobs/:jobId — not found or other user", () => {
+  describe("GET /v1/me/jobs/:jobId ??not found or other user", () => {
     it("returns 404 for non-existent job", async () => {
       const res = await request(app)
         .get(`${API_ROUTES.ME_JOBS}/nonexistent-job`)
@@ -390,10 +382,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // GET /v1/me/jobs/:jobId — deleted tombstone
+  // GET /v1/me/jobs/:jobId ??deleted tombstone
   // -----------------------------------------------------------------------
 
-  describe("GET /v1/me/jobs/:jobId — deleted tombstone", () => {
+  describe("GET /v1/me/jobs/:jobId ??deleted tombstone", () => {
     it("returns 410 for a deleted job owned by the caller", async () => {
       const job = makeJob({
         jobId: "job-deleted-detail",
@@ -412,10 +404,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // GET /v1/me/jobs/:jobId — own job success
+  // GET /v1/me/jobs/:jobId ??own job success
   // -----------------------------------------------------------------------
 
-  describe("GET /v1/me/jobs/:jobId — own job", () => {
+  describe("GET /v1/me/jobs/:jobId ??own job", () => {
     it("returns 200 with sanitized response", async () => {
       const resultPath = path.join(tempResultDir, "detail-ok.pdf");
       await fs.writeFile(resultPath, "%PDF-1.4 fake");
@@ -460,10 +452,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // DELETE /v1/me/jobs/:jobId — auth required
+  // DELETE /v1/me/jobs/:jobId ??auth required
   // -----------------------------------------------------------------------
 
-  describe("DELETE /v1/me/jobs/:jobId — auth required", () => {
+  describe("DELETE /v1/me/jobs/:jobId ??auth required", () => {
     it("returns 401 without Authorization header", async () => {
       const res = await request(app).delete(`${API_ROUTES.ME_JOBS}/some-id`);
       expect(res.status).toBe(401);
@@ -471,10 +463,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // DELETE /v1/me/jobs/:jobId — not found / other user
+  // DELETE /v1/me/jobs/:jobId ??not found / other user
   // -----------------------------------------------------------------------
 
-  describe("DELETE /v1/me/jobs/:jobId — not found or other user", () => {
+  describe("DELETE /v1/me/jobs/:jobId ??not found or other user", () => {
     it("returns 404 for non-existent job", async () => {
       const res = await request(app)
         .delete(`${API_ROUTES.ME_JOBS}/nonexistent-job`)
@@ -520,10 +512,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // DELETE /v1/me/jobs/:jobId — processing conflict
+  // DELETE /v1/me/jobs/:jobId ??processing conflict
   // -----------------------------------------------------------------------
 
-  describe("DELETE /v1/me/jobs/:jobId — processing conflict", () => {
+  describe("DELETE /v1/me/jobs/:jobId ??processing conflict", () => {
     it("returns 409 when job is processing", async () => {
       const job = makeJob({
         jobId: "job-processing-delete",
@@ -544,10 +536,10 @@ describe("member job history and deletion API (Todo 7)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // DELETE /v1/me/jobs/:jobId — success and idempotency
+  // DELETE /v1/me/jobs/:jobId ??success and idempotency
   // -----------------------------------------------------------------------
 
-  describe("DELETE /v1/me/jobs/:jobId — success and idempotency", () => {
+  describe("DELETE /v1/me/jobs/:jobId ??success and idempotency", () => {
     it("returns 200 on successful delete and stores a privacy-safe tombstone", async () => {
       const resultPath = path.join(tempResultDir, "delete-ok.pdf");
       await fs.writeFile(resultPath, "%PDF-1.4 fake");
@@ -614,7 +606,7 @@ describe("member job history and deletion API (Todo 7)", () => {
       ]);
     });
 
-    it("is idempotent — repeat delete returns 200", async () => {
+    it("is idempotent ??repeat delete returns 200", async () => {
       const job = makeJob({
         jobId: "job-delete-idempotent",
         ownerType: "user",
@@ -629,57 +621,13 @@ describe("member job history and deletion API (Todo 7)", () => {
         .set("Authorization", "Bearer valid-user-token");
       expect(res1.status).toBe(200);
 
-      // Second delete — should return 200 (no-op, already deleted).
+      // Second delete ??should return 200 (no-op, already deleted).
       // getJobForUser returns null for deleted jobs, so the route sees
       // "not found" and returns 200 idempotently.
       const res2 = await request(app)
         .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
         .set("Authorization", "Bearer valid-user-token");
       expect(res2.status).toBe(200);
-    });
-
-    it("returns 404 instead of deleting member metadata after its preservation period", async () => {
-      const job = makeJob({
-        jobId: "job-delete-metadata-expired",
-        ownerType: "user",
-        userId: "user-123",
-        status: "completed",
-        metadataExpiresAt: new Date(Date.now() - 1_000).toISOString(),
-      });
-      await createJob(job as CreateJobInput);
-
-      const res = await request(app)
-        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
-        .set("Authorization", "Bearer valid-user-token");
-
-      expect(res.status).toBe(404);
-      expect(await getJob(job.jobId)).not.toBeNull();
-      expect(deleteStoredJobFiles).not.toHaveBeenCalled();
-    });
-
-    it("keeps a privacy-safe tombstone when cleanup fails and blocks retry until the lease expires", async () => {
-      const job = makeJob({
-        jobId: "job-delete-retry",
-        ownerType: "user",
-        userId: "user-123",
-        status: "completed",
-      });
-      await createJob(job as CreateJobInput);
-      vi.mocked(deleteStoredJobFiles).mockRejectedValueOnce(new Error("cleanup failed"));
-
-      const failed = await request(app)
-        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
-        .set("Authorization", "Bearer valid-user-token");
-      const restored = await getJob(job.jobId);
-      const retriedDuringLease = await request(app)
-        .delete(`${API_ROUTES.ME_JOBS}/${job.jobId}`)
-        .set("Authorization", "Bearer valid-user-token");
-
-      expect(failed.status).toBe(500);
-      expect(restored).toMatchObject({ status: "deleted", cleanupPending: true });
-      expect(restored?.originalObjectPath).toBeUndefined();
-      expect(restored?.resultObjectPath).toBeUndefined();
-      expect(retriedDuringLease.status).toBe(409);
     });
 
     it("hides deleted job from GET /v1/me/jobs list", async () => {
