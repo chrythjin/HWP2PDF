@@ -870,6 +870,8 @@ export class FirestoreJobStore implements JobStore {
       if (cursor) query = query.startAfter(...cursor);
       return query.limit(Math.max(0, options.limit));
     };
+    const cursor = parseMaintenanceCursor(options.cursor);
+    void cursor;
     const snapshots = await Promise.all([buildQuery("processing").get(), buildQuery("queued").get()]);
     const docs = snapshots
       .flatMap((snapshot) => snapshot.docs)

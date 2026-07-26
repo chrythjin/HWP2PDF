@@ -240,12 +240,13 @@ async function deleteGcsObject(objectPath: string | undefined): Promise<void> {
   try {
     await getBucket().file(objectPath).delete({ ignoreNotFound: true });
   } catch (error) {
-    const errorName = error instanceof Error ? error.name : typeof error;
+    // Log a generic error without the object path to avoid leaking names.
+    const detail = error instanceof Error ? error.message : "unknown";
     console.error(
       JSON.stringify({
         level: "error",
-        event: "gcs_object_deletion_failed",
-        errorName,
+        message: "GCS object deletion failed",
+        detail: detail.replace(objectPath, "[REDACTED_PATH]"),
       }),
     );
     throw new Error("GCS object deletion failed", { cause: error });
@@ -265,12 +266,12 @@ async function deleteLocalFile(localPath: string | undefined): Promise<void> {
   try {
     await fs.rm(localPath, { force: true });
   } catch (error) {
-    const errorName = error instanceof Error ? error.name : typeof error;
+    const detail = error instanceof Error ? error.message : "unknown";
     console.error(
       JSON.stringify({
         level: "error",
-        event: "local_file_deletion_failed",
-        errorName,
+        message: "Local file deletion failed",
+        detail: detail.replace(localPath, "[REDACTED_PATH]"),
       }),
     );
     throw new Error("Local file deletion failed", { cause: error });

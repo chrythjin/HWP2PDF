@@ -6,7 +6,7 @@ Request pipeline. Parent `AGENTS.md` covers the broader Express flow.
 
 | File | Role |
 |---|---|
-| `auth.ts` | `requireAuth` (member-only) / `optionalAuth` (member-or-anonymous) — Firebase ID token verify, attaches `AuthenticatedUser` to `request.user` |
+| `auth.ts` | `requireAuth` (member-only) / `optionalAuth` (member-or-anonymous) — Firebase ID token verify, attaches `AuthenticatedUser` to `request.auth` |
 | `upload.ts` | Multer multipart handler — size/extension/OLE signature gate |
 | `error-handler.ts` | Central error responder — `ApiError` → user-safe JSON; non-`ApiError` → 500 with diagnostic logging |
 | `worker-auth.ts` | OIDC token verify for `/internal/workers/convert` (Cloud Tasks) |
@@ -25,6 +25,6 @@ Request pipeline. Parent `AGENTS.md` covers the broader Express flow.
 
 ## Invariants
 
-- `requireAuth` rejects when `request.user.uid` is missing → 401.
-- `optionalAuth` populates `request.user` when a valid token is present; without a token it proceeds without throwing and routes must check `request.user` before using it.
+- `requireAuth` rejects when `request.auth.userId` is missing → 401.
+- `optionalAuth` always populates `request.auth` (member or anonymous) when a valid token is present, never throws.
 - OIDC token verifier for worker endpoints must validate audience against `INTERNAL_WORKER_AUDIENCE` (configured at deploy time).

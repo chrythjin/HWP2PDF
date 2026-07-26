@@ -64,13 +64,13 @@ export async function convertJobToPdf(input: ConversionInput) {
     });
   } catch (error) {
     const errorCode = classifyConversionError(error);
-    const errorName = error instanceof Error ? error.name : typeof error;
     console.error(JSON.stringify({
       level: "error",
       event: "conversion_failed",
       jobId: input.jobId,
-      errorName,
-      errorCode,
+      error: error instanceof Error
+        ? { name: error.name, message: error.message, stack: error.stack }
+        : { value: String(error) },
     }));
     await updateJob(input.jobId, {
       status: "failed",

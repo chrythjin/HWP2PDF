@@ -296,30 +296,16 @@ export async function enqueueConversionJob(
   }
 
   if (mode === "inline") {
-    // Local/dev fallback: claim the queued job before invoking conversion so
-    // concurrent dispatches for the same jobId cannot double-convert. Mirrors
-    // the worker endpoint's optimistic lock. Dynamic import to avoid circular
-    // dependency at module load time.
+    // Local/dev fallback: call conversion directly.
+    // Dynamic import to avoid circular dependency at module load time.
     const { convertJobToPdf } = await import("./conversion-service.js");
-    const { claimQueuedJobForProcessing } = await import("./job-store.js");
-    const claim = await claimQueuedJobForProcessing(jobId);
-    if (claim.status !== "claimed") {
-      // Job is already processing/completed/failed/deleted/expired or missing.
-      // Skip conversion to stay idempotent with the worker endpoint.
-      return { mode: "inline" };
-    }
-    const job = claim.job;
+    const { getJob } = await import("./job-store.js");
+    const job = await getJob(jobId);
+    if (job) {
     void convertJobToPdf({ jobId: job.jobId, sourcePath: job.sourcePath }).catch((error: unknown) => {
-      const errorName = error instanceof Error ? error.name : typeof error;
-      console.error(
-        JSON.stringify({
-          level: "error",
-          event: "inline_conversion_failed",
-          jobId: job.jobId,
-          errorName,
-        }),
-      );
+      console.error("Inline conversion failed", error);
     });
+    }
     return { mode: "inline" };
   }
 

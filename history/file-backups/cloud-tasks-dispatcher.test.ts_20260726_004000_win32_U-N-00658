@@ -279,7 +279,7 @@ describe("cloud-tasks-dispatcher", () => {
   // -----------------------------------------------------------------------
 
   describe("inline mode", () => {
-    it("claims the queued job before invoking convertJobToPdf", async () => {
+    it("calls convertJobToPdf directly without network", async () => {
       process.env.CONVERSION_DISPATCHER = "inline";
       process.env.FIREBASE_ADMIN_MODE = "adc";
 
@@ -289,49 +289,22 @@ describe("cloud-tasks-dispatcher", () => {
         convertJobToPdf: conversionMock,
       }));
 
-      const claimMock = vi.fn().mockResolvedValue({
-        status: "claimed",
-        job: {
-          jobId: "inline-test-001",
-          sourcePath: "/tmp/test.hwp",
-        },
+      const getJobMock = vi.fn().mockResolvedValue({
+        jobId: "inline-test-001",
+        sourcePath: "/tmp/test.hwp",
       });
       vi.doMock("./job-store.js", () => ({
-        claimQueuedJobForProcessing: claimMock,
+        getJob: getJobMock,
       }));
 
       const result = await enqueueConversionJob("inline-test-001");
 
       expect(result.mode).toBe("inline");
-      expect(claimMock).toHaveBeenCalledWith("inline-test-001");
+      expect(getJobMock).toHaveBeenCalledWith("inline-test-001");
       expect(conversionMock).toHaveBeenCalledWith({
         jobId: "inline-test-001",
         sourcePath: "/tmp/test.hwp",
       });
-    });
-
-    it("skips convertJobToPdf when the queued-job claim is not granted", async () => {
-      process.env.CONVERSION_DISPATCHER = "inline";
-      process.env.FIREBASE_ADMIN_MODE = "adc";
-
-      const conversionMock = vi.fn();
-      vi.doMock("./conversion-service.js", () => ({
-        convertJobToPdf: conversionMock,
-      }));
-
-      const claimMock = vi.fn().mockResolvedValue({
-        status: "already_processing",
-        current: { jobId: "inline-test-002", status: "processing" },
-      });
-      vi.doMock("./job-store.js", () => ({
-        claimQueuedJobForProcessing: claimMock,
-      }));
-
-      const result = await enqueueConversionJob("inline-test-002");
-
-      expect(result.mode).toBe("inline");
-      expect(claimMock).toHaveBeenCalledWith("inline-test-002");
-      expect(conversionMock).not.toHaveBeenCalled();
     });
   });
 });
