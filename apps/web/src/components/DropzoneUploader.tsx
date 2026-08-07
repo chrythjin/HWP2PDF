@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type FileRejection, useDropzone } from "react-dropzone";
 import {
   API_ROUTES,
@@ -77,6 +77,21 @@ export default function DropzoneUploader() {
   const [downloadAvailable, setDownloadAvailable] = useState<boolean | undefined>(undefined);
   const [downloadUnavailableReason, setDownloadUnavailableReason] = useState<DownloadUnavailableReason | undefined>(undefined);
   const uploadSessionRef = useRef(0);
+
+  // Warn the user if they try to leave the page while an upload/conversion is
+  // in progress. Browsers show a default confirmation dialog when preventDefault
+  // is called on a beforeunload event.
+  useEffect(() => {
+    if (!isActiveStatus(status)) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [status]);
 
   const handleReset = useCallback(() => {
     uploadSessionRef.current += 1;
