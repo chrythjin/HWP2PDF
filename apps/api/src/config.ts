@@ -20,7 +20,10 @@ const firebaseAdminMode =
 
 export const config = {
   port: Number(process.env.PORT ?? 8080),
-  corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:3000",
+  corsOrigins: (process.env.CORS_ORIGIN ?? "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
   uploadDirectory: process.env.UPLOAD_DIR ?? "tmp/uploads",
   resultDirectory: process.env.RESULT_DIR ?? "tmp/results",
   converterCommand: process.env.LIBREOFFICE_BIN ?? "soffice",

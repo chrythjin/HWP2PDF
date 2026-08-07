@@ -29,7 +29,13 @@ export async function createApp(options: { converterOnly?: boolean } = {}) {
   app.use(helmet());
   app.use(
     cors({
-      origin: config.corsOrigin,
+      origin: (origin, callback) => {
+        if (!origin || config.corsOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`Origin ${origin} not allowed by CORS`));
+        }
+      },
       allowedHeaders: ["Content-Type", "Authorization", ANONYMOUS_ACCESS_TOKEN_HEADER],
     }),
   );

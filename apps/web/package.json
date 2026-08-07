@@ -2,6 +2,9 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,7 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@hwp2pdf/shared": "workspace:*",
+    "@hwp2pdf/shared": "*",
     "next": "16.2.11",
     "react": "19.2.4",
     "react-dom": "19.2.4",

@@ -26,15 +26,16 @@ function buildCsp(apiBaseUrl: string | undefined): string[] {
     "https://storage.googleapis.com",
     "https://identitytoolkit.googleapis.com",
     "https://securetoken.googleapis.com",
-    // AdSense telemetry / SODAR config endpoint
+    // AdSense telemetry / SODAR config + script endpoints
     "https://ep1.adtrafficquality.google",
+    "https://ep2.adtrafficquality.google",
   ];
   if (apiOrigin) connectSources.push(apiOrigin);
 
   return [
     "default-src 'self'",
-    // Scripts: self + inline (Next.js hydration) + AdSense SDK + Firebase App
-    "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com https://www.gstatic.com https://www.googleapis.com",
+    // Scripts: self + inline (Next.js hydration) + AdSense SDK + SODAR + Firebase App
+    "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com https://www.gstatic.com https://www.googleapis.com https://ep1.adtrafficquality.google https://ep2.adtrafficquality.google",
     // Styles: self + inline (Next.js styled-jsx) + Google Fonts CSS
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     // Fonts: self + Google Fonts file CDN
@@ -44,7 +45,7 @@ function buildCsp(apiBaseUrl: string | undefined): string[] {
     // Connect: self + Firebase Auth + Firestore + GCS upload + AdSense SODAR + API
     `connect-src ${connectSources.join(" ")}`,
     // Frames: AdSense renders ads in iframes
-    "frame-src 'self' https://googleads.g.doubleclick.net https://pagead2.googlesyndication.com",
+    "frame-src 'self' https://googleads.g.doubleclick.net https://pagead2.googlesyndication.com https://ep2.adtrafficquality.google https://www.google.com",
     // Object/embed: blocked
     "object-src 'none'",
     "base-uri 'self'",

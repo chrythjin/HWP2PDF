@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "npm run build --workspace @hwp2pdf/shared --if-present && npm run build --workspace web",
+  "outputDirectory": "apps/web/.next",
+  "installCommand": "npm install --ignore-scripts"
+}
