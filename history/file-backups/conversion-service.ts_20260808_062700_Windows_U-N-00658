@@ -1,0 +1,3 @@
+// Backup created before expanding LibreOffice native crash diagnostics.
+// The preceding full backup is conversion-service.ts_20260808_061200_Windows_U-N-00658.
+// This change-point contained per-invocation HOME/XDG/TMPDIR isolation under runtimeRoot.

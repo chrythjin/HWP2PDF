@@ -85,28 +85,11 @@ export async function convertJobToPdf(input: ConversionInput) {
 }
 
 async function runLibreOffice(sourcePath: string, outputDirectory: string) {
-  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "hwp2pdf-lo-"));
-  const profileDirectory = path.join(runtimeRoot, "profile");
-  const homeDirectory = path.join(runtimeRoot, "home");
-  const configDirectory = path.join(runtimeRoot, "config");
-  const cacheDirectory = path.join(runtimeRoot, "cache");
-  const runtimeDirectory = path.join(runtimeRoot, "runtime");
-  const tempDirectory = path.join(runtimeRoot, "tmp");
-
-  await Promise.all([
-    profileDirectory,
-    homeDirectory,
-    configDirectory,
-    cacheDirectory,
-    runtimeDirectory,
-    tempDirectory,
-  ].map((directory) => fs.mkdir(directory, { recursive: true })));
-  await fs.chmod(runtimeDirectory, 0o700);
+  const profileDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hwp2pdf-lo-"));
 
   try {
     await new Promise<void>((resolve, reject) => {
-      const startedAt = Date.now();
-      const libreOfficeProcess = spawn(config.converterCommand, [
+      const process = spawn(config.converterCommand, [
         "--headless",
         "--nologo",
         "--nofirststartwizard",
@@ -119,25 +102,13 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
         "--outdir",
         outputDirectory,
         sourcePath,
-      ], {
-        env: {
-          ...process.env,
-          HOME: homeDirectory,
-          XDG_CONFIG_HOME: configDirectory,
-          XDG_CACHE_HOME: cacheDirectory,
-          XDG_RUNTIME_DIR: runtimeDirectory,
-          TMPDIR: tempDirectory,
-        },
-      });
+      ]);
 
-      let stderrHead = "";
-      let stderrTail = "";
+      let stderr = "";
       let stdout = "";
       let settled = false;
-      const redactRuntimePaths = (value: string) => value
-        .replaceAll(runtimeRoot, "[runtime]")
-        .replaceAll(sourcePath, "[source]")
-        .replaceAll(outputDirectory, "[output]");
+      const appendOutput = (current: string, chunk: Buffer) =>
+        (current + chunk.toString("utf8")).slice(-8_192);
       const finish = (callback: () => void) => {
         if (settled) return;
         settled = true;
@@ -146,7 +117,7 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
       };
       const timeout = setTimeout(() => {
         try {
-          libreOfficeProcess.kill("SIGKILL");
+          process.kill("SIGKILL");
         } catch {
           // The close/error handler may have already observed process exit.
         }
@@ -154,29 +125,25 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
       }, config.conversionTimeoutMs);
       timeout.unref();
 
-      libreOfficeProcess.stdout.on("data", (chunk: Buffer) => {
-        stdout = (stdout + chunk.toString("utf8")).slice(-8_192);
+      process.stdout.on("data", (chunk: Buffer) => {
+        stdout = appendOutput(stdout, chunk);
       });
 
-      libreOfficeProcess.stderr.on("data", (chunk: Buffer) => {
-        const text = chunk.toString("utf8");
-        if (stderrHead.length < 8_192) {
-          stderrHead = (stderrHead + text).slice(0, 8_192);
-        }
-        stderrTail = (stderrTail + text).slice(-8_192);
+      process.stderr.on("data", (chunk: Buffer) => {
+        stderr = appendOutput(stderr, chunk);
       });
 
-      libreOfficeProcess.on("error", () => {
+      process.on("error", () => {
         finish(() => reject(new Error("LibreOffice 변환 엔진을 실행할 수 없습니다. LIBREOFFICE_BIN 또는 런타임 이미지를 확인하세요.")));
       });
 
-      libreOfficeProcess.on("close", (code, signal) => {
+      process.on("close", (code) => {
         if (code === 0) {
           finish(resolve);
           return;
         }
 
-        const details = [stdout.trim(), stderrTail.trim()].filter(Boolean).join("\n").slice(0, 2000);
+        const details = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").slice(0, 2000);
         const diagMessage = details || `LibreOffice 변환이 종료 코드 ${code}로 실패했습니다.`;
         // 기존 conversion_failed 이벤트(convertJobToPdf catch)와 별도로,
         // LibreOffice 프로세스 수준의 진단 정보를 기록한다.
@@ -184,16 +151,13 @@ async function runLibreOffice(sourcePath: string, outputDirectory: string) {
           level: "error",
           event: "libreoffice_exit_nonzero",
           exitCode: code,
-          exitSignal: signal,
-          durationMs: Date.now() - startedAt,
-          stdoutTail: redactRuntimePaths(stdout.trim()),
-          stderrHead: redactRuntimePaths(stderrHead.trim()),
-          stderrTail: redactRuntimePaths(stderrTail.trim()),
+          stdoutTail: stdout.trim().slice(-500),
+          stderrTail: stderr.trim().slice(-500),
         }));
         finish(() => reject(new Error(diagMessage)));
       });
     });
   } finally {
-    await fs.rm(runtimeRoot, { recursive: true, force: true });
+    await fs.rm(profileDirectory, { recursive: true, force: true });
   }
 }
