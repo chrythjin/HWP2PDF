@@ -19,13 +19,12 @@ RUN pnpm --filter @hwp2pdf/shared build \
   && pnpm --filter api build \
   && pnpm --filter api deploy --prod --ignore-scripts /prod/api
 
-# Trixie provides LibreOffice 25.2 while retaining the existing Node 20 API runtime.
-FROM node:20-trixie-slim AS runtime
+FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV LIBREOFFICE_BIN=soffice
-ENV H2ORESTART_URL=https://github.com/ebandal/H2Orestart/releases/download/v0.7.13/H2Orestart.oxt
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+ENV H2ORESTART_URL=https://github.com/ebandal/H2Orestart/releases/download/v0.7.12/H2Orestart.oxt
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH=$JAVA_HOME/bin:$PATH
 ENV UPLOAD_DIR=/tmp/hwp2pdf/uploads
 ENV RESULT_DIR=/tmp/hwp2pdf/results
@@ -42,7 +41,7 @@ RUN apt-get update \
     ca-certificates \
     curl \
     unzip \
-    openjdk-21-jre-headless \
+    openjdk-17-jre-headless \
   && curl -fsSL $H2ORESTART_URL -o /tmp/H2Orestart.oxt \
   && mkdir -p /usr/lib/libreoffice/share/extensions \
   && /usr/lib/libreoffice/program/unopkg add --shared /tmp/H2Orestart.oxt \
@@ -56,8 +55,6 @@ RUN apt-get update \
   && useradd --system --uid 1001 --gid 1001 --create-home hwp2pdf \
   && mkdir -p /tmp/hwp2pdf/uploads /tmp/hwp2pdf/results \
   && chown -R hwp2pdf:hwp2pdf /app /tmp/hwp2pdf \
-  && echo "--- LibreOffice version ---" \
-  && /usr/lib/libreoffice/program/soffice --version \
   && echo "--- Final extension check ---" \
   && /usr/lib/libreoffice/program/unopkg list --shared 2>&1 | head -20
 
