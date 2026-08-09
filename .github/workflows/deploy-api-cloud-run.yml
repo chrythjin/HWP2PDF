@@ -23,11 +23,12 @@ env:
   GAR_LOCATION: asia-northeast3
   GAR_REPOSITORY: hwp2pdf
   SERVICE_NAME: ${{ vars.CLOUD_RUN_API_SERVICE || 'hwp2pdf-api' }}
+  CONVERTER_SERVICE_NAME: ${{ vars.CLOUD_RUN_CONVERTER_SERVICE || 'hwp2pdf-converter' }}
   # Cloud Tasks queue for durable conversion dispatch (Todo 6/13).
   # Create with: gcloud tasks queues create conversion-queue --location=$REGION
   CLOUD_TASKS_QUEUE_NAME: ${{ vars.CLOUD_TASKS_QUEUE_NAME || 'conversion-queue' }}
   CLOUD_TASKS_LOCATION: ${{ vars.CLOUD_TASKS_LOCATION || vars.GCP_REGION || 'asia-northeast3' }}
-  CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL: ${{ secrets.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL || secrets.GCP_SERVICE_ACCOUNT_EMAIL || vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}
+  CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL: ${{ secrets.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL || vars.CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL || 'api-dispatcher-sa@hwp2pdf-499911.iam.gserviceaccount.com' }}
   CLOUD_RUN_MAX_INSTANCES: ${{ vars.CLOUD_RUN_MAX_INSTANCES || '1' }}
   # Firestore collections for job and board persistence.
   FIRESTORE_JOBS_COLLECTION: ${{ vars.FIRESTORE_JOBS_COLLECTION || 'jobs' }}
@@ -113,35 +114,46 @@ jobs:
             --max-instances "${CLOUD_RUN_MAX_INSTANCES}" \
             --service-account "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL || secrets.CLOUD_RUN_API_SERVICE_ACCOUNT || vars.CLOUD_RUN_API_SERVICE_ACCOUNT }}" \
             --set-env-vars NODE_ENV=production \
-            --set-env-vars CORS_ORIGIN="${{ secrets.WEB_ORIGIN || vars.WEB_ORIGIN }}" \
+            --set-env-vars CORS_ORIGIN="${{ secrets.WEB_ORIGIN || vars.WEB_ORIGIN || 'https://hwp2pdf-six.vercel.app' }}" \
             --set-env-vars STORAGE_BACKEND=gcs \
             --set-env-vars GCS_BUCKET_NAME="${{ secrets.GCS_BUCKET_NAME || vars.GCS_BUCKET_NAME }}" \
+            --set-env-vars GCS_PROJECT_ID="${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID }}" \
             --set-env-vars GCS_ORIGINAL_PREFIX="staging" \
             --set-env-vars GCS_RESULT_PREFIX="output" \
             --set-env-vars SIGNED_DOWNLOAD_URL_TTL_MINUTES="15" \
             --set-env-vars JOB_RETENTION_MINUTES="30" \
             --set-env-vars JOB_STORE_BACKEND=firestore \
+            --set-env-vars FIRESTORE_PROJECT_ID="${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID }}" \
             --set-env-vars FIRESTORE_DATABASE_ID="(default)" \
             --set-env-vars FIRESTORE_JOBS_COLLECTION="${FIRESTORE_JOBS_COLLECTION}" \
             --set-env-vars FIRESTORE_BOARD_POSTS_COLLECTION="${FIRESTORE_BOARD_POSTS_COLLECTION}" \
             --set-env-vars FIREBASE_PROJECT_ID="${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID }}" \
             --set-env-vars FIREBASE_ADMIN_MODE="adc" \
+            --set-env-vars LIBREOFFICE_BIN="/usr/bin/soffice" \
             --set-env-vars GOOGLE_APPLICATION_CREDENTIALS_JSON="${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON || '' }}" \
             --set-env-vars CONVERSION_DISPATCHER="cloud-tasks" \
             --set-env-vars CLOUD_TASKS_QUEUE_NAME="${CLOUD_TASKS_QUEUE_NAME}" \
             --set-env-vars CLOUD_TASKS_LOCATION="${CLOUD_TASKS_LOCATION}" \
-            --set-env-vars CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL="${CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL}"
+            --set-env-vars CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL="${CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL}" \
+            --set-env-vars CLOUD_TASKS_PROJECT_ID="${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID }}"
 
-      - name: Resolve Cloud Run service URL and configure worker endpoint
+      - name: Configure dedicated converter worker endpoint
         run: |
-          SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
-          WORKER_URL="${SERVICE_URL}/internal/workers/convert"
-          echo "Configuring INTERNAL_WORKER_URL=${WORKER_URL}"
+          CONVERTER_CONFIG=$(gcloud run services describe "$CONVERTER_SERVICE_NAME" --region "$REGION" --format=json)
+          WORKER_URL=$(printf '%s' "$CONVERTER_CONFIG" | python3 -c 'import json, sys; env = json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0].get("env", []); print(next((item["value"] for item in env if item["name"] == "INTERNAL_WORKER_URL"), ""))')
+          WORKER_AUDIENCE=$(printf '%s' "$CONVERTER_CONFIG" | python3 -c 'import json, sys; env = json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0].get("env", []); print(next((item["value"] for item in env if item["name"] == "INTERNAL_WORKER_AUDIENCE"), ""))')
+          if [ -z "$WORKER_URL" ] || [ -z "$WORKER_AUDIENCE" ]; then
+            echo "Dedicated converter must set INTERNAL_WORKER_URL and INTERNAL_WORKER_AUDIENCE."
+            exit 1
+          fi
+          echo "Configuring dedicated CONVERTER_WORKER_URL=${WORKER_URL}"
           gcloud run services update "$SERVICE_NAME" \
             --region "$REGION" \
-            --update-env-vars INTERNAL_WORKER_URL="${WORKER_URL}" \
-            --update-env-vars INTERNAL_WORKER_AUDIENCE="${WORKER_URL}"
-          echo "SERVICE_URL=${SERVICE_URL}" >> "$GITHUB_ENV"
+            --update-env-vars CONVERSION_DISPATCH_TARGET=converter \
+            --update-env-vars CONVERTER_WORKER_URL="${WORKER_URL}" \
+            --update-env-vars CONVERTER_WORKER_AUDIENCE="${WORKER_AUDIENCE}"
+          API_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
+          echo "SERVICE_URL=${API_URL}" >> "$GITHUB_ENV"
 
       - name: Smoke test deployed API
         run: |
