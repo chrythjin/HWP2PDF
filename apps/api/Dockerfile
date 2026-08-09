@@ -62,6 +62,10 @@ RUN apt-get update \
   && /usr/lib/libreoffice/program/unopkg list --shared 2>&1 | head -20
 
 COPY --from=build --chown=hwp2pdf:hwp2pdf /prod/api ./
+# `pnpm deploy` does not retain this local workspace package when the API
+# declares its npm-compatible "*" range. Preserve the built runtime package so
+# Node can resolve imports from the emitted API JavaScript at container start.
+COPY --from=build --chown=hwp2pdf:hwp2pdf /app/packages/shared ./node_modules/@hwp2pdf/shared
 
 USER hwp2pdf
 EXPOSE 8080
