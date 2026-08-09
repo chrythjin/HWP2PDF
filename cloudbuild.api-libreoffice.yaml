@@ -3,11 +3,11 @@ steps:
     args:
       - build
       - -f
-      - apps/api/Dockerfile.libreoffice-fix
+      - apps/api/Dockerfile
       - -t
-      - asia-northeast3-docker.pkg.dev/hwp2pdf-499911/hwp2pdf/hwp2pdf-api:libreoffice-fix
+      - asia-northeast3-docker.pkg.dev/hwp2pdf-499911/hwp2pdf/hwp2pdf-api:${_IMAGE_TAG}
       - .
 options:
   logging: CLOUD_LOGGING_ONLY
 images:
-  - asia-northeast3-docker.pkg.dev/hwp2pdf-499911/hwp2pdf/hwp2pdf-api:libreoffice-fix
+  - asia-northeast3-docker.pkg.dev/hwp2pdf-499911/hwp2pdf/hwp2pdf-api:${_IMAGE_TAG}
