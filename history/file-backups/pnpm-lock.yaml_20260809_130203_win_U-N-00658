@@ -32,7 +32,7 @@ importers:
         specifier: ^6.2.3
         version: 6.2.3
       '@hwp2pdf/shared':
-        specifier: '*'
+        specifier: workspace:*
         version: link:../../packages/shared
       cors:
         specifier: ^2.8.6
@@ -90,7 +90,7 @@ importers:
   apps/web:
     dependencies:
       '@hwp2pdf/shared':
-        specifier: '*'
+        specifier: workspace:*
         version: link:../../packages/shared
       firebase:
         specifier: ^12.15.0
