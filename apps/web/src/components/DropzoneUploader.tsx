@@ -6,6 +6,8 @@ import {
   API_ROUTES,
   ALLOWED_EXTENSIONS,
   ANONYMOUS_ACCESS_TOKEN_HEADER,
+  FILE_TOO_LARGE_ERROR,
+  INVALID_EXTENSION_ERROR,
   MAX_FILE_SIZE,
   MAX_POLLING_TIME,
   POLLING_INTERVAL,
@@ -38,6 +40,24 @@ function readApiError(responseText: string, fallbackMessage: string) {
 
 function isActiveStatus(status: UploadStatus) {
   return status === "uploading" || status === "queued" || status === "processing";
+}
+
+function getRejectedFileMessage(rejection: FileRejection) {
+  const errorCode = rejection.errors[0]?.code;
+
+  if (errorCode === "file-invalid-type") {
+    return INVALID_EXTENSION_ERROR;
+  }
+
+  if (errorCode === "file-too-large") {
+    return FILE_TOO_LARGE_ERROR;
+  }
+
+  if (errorCode === "too-many-files") {
+    return "한 번에 하나의 HWP 파일만 선택할 수 있습니다.";
+  }
+
+  return "파일을 업로드할 수 없습니다.";
 }
 
 /**
@@ -412,9 +432,9 @@ export default function DropzoneUploader() {
       if (isActiveStatus(status)) return;
 
       if (rejectedFiles.length > 0) {
-        const message = rejectedFiles[0]?.errors[0]?.message ?? "파일을 업로드할 수 없습니다.";
-        setErrorMessage(message);
+        setErrorMessage(getRejectedFileMessage(rejectedFiles[0]));
         setStatus("failed");
+        setProgress(0);
         return;
       }
 

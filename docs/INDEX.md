@@ -40,9 +40,18 @@ This folder is the project documentation entry point for future OpenCode session
 - `architecture/adr/README.md` - HWP2PDF architectural decisions index directory.
 - `architecture/adr/0001-private-converter-service-separation.md` - proposed private converter isolation and deployment contract (ADR).
 - `plan/auth-history-delete-board-roadmap.md` - Auth, history, deletion, board roadmap; full final implementation plan copied from `.omo/plans/auth-history-delete-board-final.md`.
+- `plan/20260712_comprehensive-review-remediation-plan.md` - completed comprehensive review remediation plan.
+- `plan/20260719_hwp-ads-fix-plan.md` - historical HWP conversion and AdSense remediation plan.
 - `operations/api-cloud-run-runtime.md` - runtime deployment contract for the roadmap: Firebase Admin ADC/fallback credentials, Cloud Tasks queue/OIDC, Firestore collections, and GCS lifecycle.
 - `.github/workflows/deploy-api-cloud-run.yml` - Cloud Run API deployment workflow with Firebase Admin, Firestore, GCS, and Cloud Tasks environment wiring.
 - `.github/workflows/deploy-web-vercel.yml` - Vercel deployment workflow with Firebase client and API base URL variables.
+
+## Reviews
+
+- `reviews/code_review_report.md` - initial whole-codebase review report (2026-06-19).
+- `reviews/analysis_results.md` - codebase analysis findings (2026-07-19).
+- `reviews/20260712_code-and-frontend-improvement-report.md` - code and frontend improvement review.
+- `reviews/20260726_code-review-fact-check.md` - review fact-check and follow-up.
 
 ## Session notes
 
@@ -94,5 +103,7 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260720_002949_deploy-failures-and-security-hardening.md` - diagnosed GitHub Actions deploy failures (Cloud Tasks worker URL `http://` violation, Vercel pnpm 8.15.0 vs 8.15.1 mismatch) and resolved 3 security issues from `analysis_results.md` (download rate limit, safe error logging, frontend CSP headers).
 - `sessions/20260721_120232_lock-firestore-rules.md` - added firestore.rules to lock down client-side Firestore access and updated firebase.json configuration.
 - `sessions/20260724_043535_full-review-lease-purge-remediation.md` - full codebase review remediation covering upload/deletion leases, retention enforcement, physical purge, runtime validation, dependency patches, and live surface verification.
+- `sessions/20260811_124600_production-site-review.md` - production-site review follow-up that standardizes rejected HWP upload messages as shared Korean user-facing copy.
+- `sessions/20260829_003600_adsense-csp-and-script-deduplication.md` - AdSense CSP enhancement, duplicate script loading cleanup, and workspace build verification.
 
 

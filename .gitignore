@@ -44,6 +44,11 @@ coverage/
 # Operational metadata (boulder plans, evidence, notepads)
 .omo/
 
+# Local agent and browser-inspection artifacts
+.opencode/lsp-auto-state.json
+.opencode/lsp.json
+.playwright-mcp/
+
 # API temporary test files
 apps/api/tmp/
 

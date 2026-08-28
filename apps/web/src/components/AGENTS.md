@@ -9,10 +9,10 @@ Reusable React UI components. Parent AGENTS.md and `apps/web/AGENTS.md` cover th
 | `DropzoneUploader.tsx` | Main HWP upload widget — file validation, multipart OR direct-to-GCS signed upload, polling, download trigger | `"use client"` |
 | `JobHistoryList.tsx` | Member job history table with state machine (loading/success/empty/error/auth-error) | `"use client"` |
 | `ConfirmationDialog.tsx` | Replaces native `confirm()` — accessibility-tested | `"use client"` |
+| `AdSenseAd.tsx` | `<AdSenseAd adSlot="..." />` ad unit wrapper (global SDK loaded in `layout.tsx`) | `"use client"` |
 | `PageLayout.tsx` | Shared page chrome (nav, footer, ad slots) | server-renderable wrapper |
 | `MobileNav.tsx` | Responsive navigation panel with keyboard a11y | `"use client"` |
 | `AuthNav.tsx` | Auth-aware nav state (login/logout/profile) | `"use client"` |
-| `AdSenseAd.tsx` | `<AdSenseAd slot="..." />` wrapper using `next/script` (`strategy="beforeInteractive"`) | `"use client"` |
 
 ## Patterns
 
@@ -23,7 +23,7 @@ Reusable React UI components. Parent AGENTS.md and `apps/web/AGENTS.md` cover th
 
 ## Anti-patterns
 
-- Don't render ad scripts with raw `<script src=...>` — use `AdSenseAd` (already loads via `next/script` with `beforeInteractive` strategy).
+- Don't render ad scripts with raw `<script src=...>` — use `layout.tsx` (`next/script` with `afterInteractive` strategy) and `AdSenseAd` for ad unit slots.
 - Don't `window.sessionStorage` outside `upload-token.ts`. SSR and disabled-storage cases must `try/catch` and degrade gracefully.
 - Don't reimplement polling/backoff logic — it lives in `DropzoneUploader`, share via hook if a second widget needs it.
 - Don't add env reads like `process.env.NEXT_PUBLIC_*` from non-public env (CVE-class secret exposure).

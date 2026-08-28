@@ -7,7 +7,6 @@ declare global {
 }
 
 import { useEffect, useRef } from "react";
-import Script from "next/script";
 
 const ADSENSE_CLIENT = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
 
@@ -32,11 +31,8 @@ export default function AdSenseAd({
   useEffect(() => {
     if (pushedRef.current || !ref.current) return;
 
-    const win = window;
-    win.adsbygoogle = win.adsbygoogle || [];
-
     try {
-      win.adsbygoogle.push({});
+      (window.adsbygoogle = window.adsbygoogle || []).push({});
       pushedRef.current = true;
     } catch (err) {
       // AdSense가 아직 로드되지 않았거나 블록된 경우 무시
@@ -47,27 +43,18 @@ export default function AdSenseAd({
   if (!ADSENSE_CLIENT) return null;
 
   return (
-    <>
-      <Script
-        id="adsense-script"
-        async
-        src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
-        crossOrigin="anonymous"
-        strategy="lazyOnload"
-      />
-      <ins
-        ref={ref}
-        className={`adsbygoogle ${className ?? ""}`}
-        style={{
-          display: "block",
-          textAlign: "center",
-          ...style,
-        }}
-        data-ad-client={ADSENSE_CLIENT}
-        data-ad-slot={adSlot}
-        data-ad-format={adFormat}
-        data-full-width-responsive="true"
-      />
-    </>
+    <ins
+      ref={ref}
+      className={`adsbygoogle ${className ?? ""}`}
+      style={{
+        display: "block",
+        textAlign: "center",
+        ...style,
+      }}
+      data-ad-client={ADSENSE_CLIENT}
+      data-ad-slot={adSlot}
+      data-ad-format={adFormat}
+      data-full-width-responsive="true"
+    />
   );
 }

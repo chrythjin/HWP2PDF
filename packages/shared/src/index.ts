@@ -357,8 +357,8 @@ export const SUPPORTED_MIME_TYPES = [
   "application/octet-stream",
 ];
 
-const INVALID_EXTENSION_ERROR = "현재는 .hwp 파일만 지원합니다.";
-const FILE_TOO_LARGE_ERROR = `파일 크기는 ${MAX_FILE_SIZE / 1024 / 1024}MB 이하여야 합니다.`;
+export const INVALID_EXTENSION_ERROR = "현재는 .hwp 파일만 지원합니다.";
+export const FILE_TOO_LARGE_ERROR = `파일 크기는 ${MAX_FILE_SIZE / 1024 / 1024}MB 이하여야 합니다.`;
 
 export function validateFileExtension(fileName: string): FileValidationResult {
   const extension = fileName.toLowerCase().slice(-4);
