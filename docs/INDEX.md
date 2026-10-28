@@ -105,5 +105,6 @@ This folder is the project documentation entry point for future OpenCode session
 - `sessions/20260724_043535_full-review-lease-purge-remediation.md` - full codebase review remediation covering upload/deletion leases, retention enforcement, physical purge, runtime validation, dependency patches, and live surface verification.
 - `sessions/20260811_124600_production-site-review.md` - production-site review follow-up that standardizes rejected HWP upload messages as shared Korean user-facing copy.
 - `sessions/20260829_003600_adsense-csp-and-script-deduplication.md` - AdSense CSP enhancement, duplicate script loading cleanup, and workspace build verification.
+- `sessions/20261028_101800_production-cors-and-converter-repair.md` - resolved production CORS rejection from `https://hwp2pdf-six.vercel.app`, updated GitHub Secret `WEB_ORIGIN`, and verified end-to-end HWP to PDF conversion.
 
 
